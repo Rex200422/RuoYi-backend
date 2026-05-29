@@ -9,6 +9,7 @@ import sys
 import re
 import time
 import random
+import argparse
 import warnings
 
 import requests
@@ -43,8 +44,8 @@ SUB_KEYWORDS = [
 ]
 ALL_KEYWORDS = MAIN_KEYWORDS + SUB_KEYWORDS
 
-MAX_PAGES = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-MAX_ARTICLES = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+DEFAULT_MAX_PAGES = 3
+DEFAULT_MAX_ARTICLES = 2
 BASE_URL = "https://home.treasury.gov/news/press-releases"
 
 # --------------- helpers ---------------
@@ -79,6 +80,53 @@ def matches_main_keywords(title, content):
     """Return True if title or content contains any main keyword."""
     combined = (title + " " + content).lower()
     return any(kw in combined for kw in MAIN_KEYWORDS)
+
+
+def update_log_start(log_id):
+    """Update crawl_log start_time when crawl begins."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_log_success(log_id, items_found, items_saved):
+    """Update crawl_log on success."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET status='success', end_time=NOW(), items_found=%s, items_saved=%s WHERE id=%s",
+                    (items_found, items_saved, log_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_log_error(log_id, error_msg):
+    """Update crawl_log on error."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s",
+                    (str(error_msg)[:2000], log_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_config_last_crawl(config_id):
+    """Update crawl_config last_crawl_time."""
+    if not config_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
 
 
 # --------------- extraction ---------------
@@ -160,17 +208,19 @@ def extract_article_date(soup):
 
 # --------------- main crawl ---------------
 
-def crawl():
+def crawl(max_pages, max_articles):
+    """Core crawl logic. Returns (items_found, items_saved) counts."""
     print("=== U.S. Treasury Spider v3 ===")
     session = requests.Session()
     conn = get_db()
     cur = conn.cursor()
     count = 0
+    items_found = 0
     visited = set()
 
     try:
-        for pg in range(1, MAX_PAGES + 1):
-            if count >= MAX_ARTICLES:
+        for pg in range(1, max_pages + 1):
+            if count >= max_articles:
                 break
 
             url = BASE_URL if pg == 1 else f"{BASE_URL}?page={pg}"
@@ -202,7 +252,7 @@ def crawl():
                 print(f"  Found {len(unique_links)} article links")
 
                 for a in unique_links:
-                    if count >= MAX_ARTICLES:
+                    if count >= max_articles:
                         break
 
                     href = a.get("href", "").strip()
@@ -230,6 +280,8 @@ def crawl():
                         print(f"    [WARN] Detail fetch failed: {e}")
                         content = ""
                         date = ""
+
+                    items_found += 1
 
                     # Keyword filter: check title + content
                     if not matches_main_keywords(title, content):
@@ -266,7 +318,43 @@ def crawl():
         conn.close()
 
     print(f"\n=== Done. Total saved: {count} articles ===")
+    return items_found, count
 
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="U.S. Treasury Spider")
+    parser.add_argument("--config-id", type=int, default=None, help="crawl_config ID")
+    parser.add_argument("--keyword", type=str, default=None, help="(reserved for logging; Treasury uses built-in keyword list)")
+    parser.add_argument("--max", type=int, default=None, help="Max articles to crawl (overrides default)")
+    parser.add_argument("--log-id", type=int, default=None, help="crawl_log ID to update")
+    # Backward compat: allow positional args as max_pages and max_articles
+    parser.add_argument("max_pages_legacy", nargs="?", type=int, default=None, help="(legacy) max pages")
+    parser.add_argument("max_articles_legacy", nargs="?", type=int, default=None, help="(legacy) max articles")
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+
+    # Determine max pages / max articles
+    max_articles = args.max if args.max is not None else (args.max_articles_legacy if args.max_articles_legacy is not None else DEFAULT_MAX_ARTICLES)
+    max_pages = args.max_pages_legacy if args.max_pages_legacy is not None else DEFAULT_MAX_PAGES
+
+    config_id = args.config_id
+    log_id = args.log_id
+
+    # On start: update log start_time
+    update_log_start(log_id)
+
+    try:
+        items_found, items_saved = crawl(max_pages, max_articles)
+        # On success: update log and config
+        update_log_success(log_id, items_found, items_saved)
+        update_config_last_crawl(config_id)
+    except Exception as e:
+        # On error: update log with error
+        update_log_error(log_id, str(e))
+        raise
 
 if __name__ == "__main__":
-    crawl()
+    main()

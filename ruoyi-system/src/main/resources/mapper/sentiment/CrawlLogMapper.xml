@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.CrawlLogMapper">
+    <resultMap type="com.ruoyi.system.domain.sentiment.CrawlLog" id="R">
+        <result property="id" column="id"/>
+        <result property="siteName" column="site_name"/>
+        <result property="keyword" column="keyword"/>
+        <result property="status" column="status"/>
+        <result property="startTime" column="start_time"/>
+        <result property="endTime" column="end_time"/>
+        <result property="itemsFound" column="items_found"/>
+        <result property="itemsSaved" column="items_saved"/>
+        <result property="errorMsg" column="error_msg"/>
+        <result property="configId" column="config_id"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+    <sql id="cols">select id,site_name,keyword,status,start_time,end_time,items_found,items_saved,error_msg,config_id,create_time from crawl_log</sql>
+    <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog" resultMap="R">
+        <include refid="cols"/><where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="keyword!=null and keyword!=''">AND keyword like concat('%',#{keyword},'%')</if>
+            <if test="status!=null and status!=''">AND status=#{status}</if>
+            <if test="configId!=null">AND config_id=#{configId}</if>
+            <if test="searchValue!=null and searchValue!=''">AND (site_name like concat('%',#{searchValue},'%') OR keyword like concat('%',#{searchValue},'%'))</if>
+        </where>order by create_time desc
+    </select>
+    <select id="selectById" parameterType="Long" resultMap="R">
+        <include refid="cols"/> where id=#{id}
+    </select>
+    <select id="selectCount" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog" resultType="long">
+        select count(*) from crawl_log<where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="keyword!=null and keyword!=''">AND keyword like concat('%',#{keyword},'%')</if>
+            <if test="status!=null and status!=''">AND status=#{status}</if>
+        </where>
+    </select>
+    <insert id="insert" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog" useGeneratedKeys="true" keyProperty="id">
+        insert into crawl_log(site_name,keyword,status,start_time,config_id,create_time)
+        values(#{siteName},#{keyword},#{status},#{startTime},#{configId},now())
+    </insert>
+    <update id="update" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog">
+        update crawl_log
+        <set>
+            <if test="status!=null">status=#{status},</if>
+            <if test="endTime!=null">end_time=#{endTime},</if>
+            <if test="itemsFound!=null">items_found=#{itemsFound},</if>
+            <if test="itemsSaved!=null">items_saved=#{itemsSaved},</if>
+            <if test="errorMsg!=null">error_msg=#{errorMsg},</if>
+        </set>
+        where id=#{id}
+    </update>
+    <delete id="deleteByIds" parameterType="Long">delete from crawl_log where id in <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach></delete>
+    <select id="selectTotalCount" resultType="long">
+        select count(*) from crawl_log
+    </select>
+    <select id="selectSuccessCount" resultType="long">
+        select count(*) from crawl_log where status='success'
+    </select>
+    <select id="selectFailedCount" resultType="long">
+        select count(*) from crawl_log where status='failed'
+    </select>
+</mapper>

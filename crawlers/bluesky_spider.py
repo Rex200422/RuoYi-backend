@@ -7,6 +7,7 @@ import os
 import sys
 import uuid
 import hashlib
+import argparse
 from datetime import datetime
 os.environ["HTTP_PROXY"] = "http://192.168.0.14:7890/"
 os.environ["HTTPS_PROXY"] = "http://192.168.0.14:7890/"
@@ -19,15 +20,63 @@ import requests
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 BSKY_USERNAME = os.environ.get("BSKY_USERNAME", "zao-17.bsky.social")
 BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD", "3ORI6-VJAFI")
-KEYWORDS = ["china", "taiwan"]
-KEYWORD_DISPLAY = {"china": "China", "taiwan": "Taiwan"}
-MAX_PER_KW = int(sys.argv[1]) if len(sys.argv) > 1 else 2
+ALL_KEYWORDS = ["china", "taiwan"]
+KEYWORD_DISPLAY = {"china": "China", "taiwan": "Taiwan", "trade": "Trade", "technology": "Technology",
+                    "military": "Military", "sanctions": "Sanctions", "tariff": "Tariff",
+                    "investment": "Investment", "financial": "Financial"}
+DEFAULT_MAX_PER_KW = 2
 DEPTH = 3
 
 IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
 PROXY = "http://192.168.0.14:7890/"
 
 def get_db(): return pymysql.connect(**DB_CONFIG)
+
+def update_log_start(log_id):
+    """Update crawl_log start_time when crawl begins."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_log_success(log_id, items_found, items_saved):
+    """Update crawl_log on success."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET status='success', end_time=NOW(), items_found=%s, items_saved=%s WHERE id=%s",
+                    (items_found, items_saved, log_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_log_error(log_id, error_msg):
+    """Update crawl_log on error."""
+    if not log_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s",
+                    (str(error_msg)[:2000], log_id))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
+
+def update_config_last_crawl(config_id):
+    """Update crawl_config last_crawl_time."""
+    if not config_id:
+        return
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
 
 def save_post(cur, p):
     sql = """INSERT INTO social_post (uuid,site_name,trigger_keyword,source_board,post_id,title,author,publish_time,like_count,comment_count,content,original_url,image_url)
@@ -132,27 +181,32 @@ def parse_thread(node, root_uri, root_title, root_image, kw, display_kw, conn, c
     if hasattr(node, 'replies') and node.replies:
         for r in node.replies: parse_thread(r, root_uri, root_title, root_image, kw, display_kw, conn, cur, depth+1)
 
-def crawl():
+def crawl(keywords, max_per_kw):
+    """Core crawl logic. Returns (items_found, items_saved) counts."""
     print("=== Bluesky 爬虫 ===")
     client = Client()
     client.login(BSKY_USERNAME, BSKY_PASSWORD)
     conn = get_db(); cur = conn.cursor()
+    items_found = 0
+    items_saved = 0
     try:
-        for kw in KEYWORDS:
+        for kw in keywords:
+            display_kw = KEYWORD_DISPLAY.get(kw, kw)
             print(f"\n--- 搜索: {kw} ---")
-            result = client.app.bsky.feed.search_posts({"q": kw, "limit": MAX_PER_KW*6, "sort": "latest"})
-            
+            result = client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw*6, "sort": "latest"})
+
             def has_media(post):
                 embed = getattr(post.record, 'embed', None)
                 if not embed: return 0
                 if hasattr(embed, 'images') and embed.images: return 2
                 if hasattr(embed, 'external') and getattr(embed.external, 'thumb', None): return 1
                 return 0
-            
+
             sorted_posts = sorted(result.posts, key=has_media, reverse=True)
             cnt = 0
             for post in sorted_posts:
-                if cnt >= MAX_PER_KW: break
+                if cnt >= max_per_kw: break
+                items_found += 1
                 uri = post.uri
                 title = (post.record.text or "")[:100]
                 if hasattr(post.record,'reply') and post.record.reply: uri = post.record.reply.root.uri
@@ -160,12 +214,54 @@ def crawl():
                 if cur.fetchone(): continue
                 try:
                     th = client.app.bsky.feed.get_post_thread({"uri":uri,"depth":DEPTH})
-                    parse_thread(th.thread, uri, title, "", kw, KEYWORD_DISPLAY.get(kw, kw), conn, cur)
+                    parse_thread(th.thread, uri, title, "", kw, display_kw, conn, cur)
                     cnt += 1
+                    items_saved += 1
                 except Exception as e: print(f"  [ERR] {e}")
                 time.sleep(1)
             print(f"  {kw}: {cnt}条")
     finally: cur.close(); conn.close()
     print("=== 完成 ===")
+    return items_found, items_saved
 
-if __name__=="__main__": crawl()
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Bluesky Spider")
+    parser.add_argument("--config-id", type=int, default=None, help="crawl_config ID")
+    parser.add_argument("--keyword", type=str, default=None, help="Keyword to crawl (overrides default list)")
+    parser.add_argument("--max", type=int, default=None, help="Max results per keyword (overrides default)")
+    parser.add_argument("--log-id", type=int, default=None, help="crawl_log ID to update")
+    # Backward compat: allow positional arg as max_per_kw
+    parser.add_argument("max_legacy", nargs="?", type=int, default=None, help="(legacy) max per keyword")
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+
+    # Determine keyword(s)
+    if args.keyword:
+        keywords = [args.keyword]
+    else:
+        keywords = ALL_KEYWORDS
+
+    # Determine max per keyword
+    max_per_kw = args.max if args.max is not None else (args.max_legacy if args.max_legacy is not None else DEFAULT_MAX_PER_KW)
+
+    config_id = args.config_id
+    log_id = args.log_id
+
+    # On start: update log start_time
+    update_log_start(log_id)
+
+    try:
+        items_found, items_saved = crawl(keywords, max_per_kw)
+        # On success: update log and config
+        update_log_success(log_id, items_found, items_saved)
+        update_config_last_crawl(config_id)
+    except Exception as e:
+        # On error: update log with error
+        update_log_error(log_id, str(e))
+        raise
+
+if __name__ == "__main__":
+    main()

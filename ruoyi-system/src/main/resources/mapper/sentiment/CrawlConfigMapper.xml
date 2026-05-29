@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.CrawlConfigMapper">
+    <resultMap type="com.ruoyi.system.domain.sentiment.CrawlConfig" id="R">
+        <result property="id" column="id"/>
+        <result property="siteName" column="site_name"/>
+        <result property="keyword" column="keyword"/>
+        <result property="intervalMinutes" column="interval_minutes"/>
+        <result property="maxResults" column="max_results"/>
+        <result property="lastCrawlTime" column="last_crawl_time"/>
+        <result property="enabled" column="enabled"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateTime" column="update_time"/>
+    </resultMap>
+    <sql id="cols">select id,site_name,keyword,interval_minutes,max_results,last_crawl_time,enabled,create_time,update_time from crawl_config</sql>
+    <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.CrawlConfig" resultMap="R">
+        <include refid="cols"/><where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="keyword!=null and keyword!=''">AND keyword like concat('%',#{keyword},'%')</if>
+            <if test="enabled!=null">AND enabled=#{enabled}</if>
+            <if test="searchValue!=null and searchValue!=''">AND (site_name like concat('%',#{searchValue},'%') OR keyword like concat('%',#{searchValue},'%'))</if>
+        </where>order by create_time desc
+    </select>
+    <select id="selectById" parameterType="Long" resultMap="R">
+        <include refid="cols"/> where id=#{id}
+    </select>
+    <select id="selectCount" parameterType="com.ruoyi.system.domain.sentiment.CrawlConfig" resultType="long">
+        select count(*) from crawl_config<where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="keyword!=null and keyword!=''">AND keyword like concat('%',#{keyword},'%')</if>
+            <if test="enabled!=null">AND enabled=#{enabled}</if>
+        </where>
+    </select>
+    <insert id="insert" parameterType="com.ruoyi.system.domain.sentiment.CrawlConfig" useGeneratedKeys="true" keyProperty="id">
+        insert into crawl_config(site_name,keyword,interval_minutes,max_results,enabled,create_time,update_time)
+        values(#{siteName},#{keyword},#{intervalMinutes},#{maxResults},#{enabled},now(),now())
+    </insert>
+    <update id="update" parameterType="com.ruoyi.system.domain.sentiment.CrawlConfig">
+        update crawl_config
+        <set>
+            <if test="siteName!=null">site_name=#{siteName},</if>
+            <if test="keyword!=null">keyword=#{keyword},</if>
+            <if test="intervalMinutes!=null">interval_minutes=#{intervalMinutes},</if>
+            <if test="maxResults!=null">max_results=#{maxResults},</if>
+            <if test="lastCrawlTime!=null">last_crawl_time=#{lastCrawlTime},</if>
+            <if test="enabled!=null">enabled=#{enabled},</if>
+            update_time=now()
+        </set>
+        where id=#{id}
+    </update>
+    <delete id="deleteByIds" parameterType="Long">delete from crawl_config where id in <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach></delete>
+    <select id="selectDueConfigs" resultMap="R">
+        select * from crawl_config where enabled=1 and (last_crawl_time is null or last_crawl_time + interval_minutes*60 &lt;= now())
+    </select>
+</mapper>
