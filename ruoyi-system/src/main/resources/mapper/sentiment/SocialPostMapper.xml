@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.SocialPostMapper">
+    <resultMap type="com.ruoyi.system.domain.sentiment.SocialPost" id="R">
+        <result property="uuid" column="uuid"/>
+        <result property="siteName" column="site_name"/>
+        <result property="triggerKeyword" column="trigger_keyword"/>
+        <result property="sourceBoard" column="source_board"/>
+        <result property="postId" column="post_id"/>
+        <result property="title" column="title"/>
+        <result property="author" column="author"/>
+        <result property="publishTime" column="publish_time"/>
+        <result property="likeCount" column="like_count"/>
+        <result property="commentCount" column="comment_count"/>
+        <result property="content" column="content"/>
+        <result property="originalUrl" column="original_url"/>
+        <result property="imageUrl" column="image_url"/>
+    </resultMap>
+    <sql id="cols">select uuid,site_name,trigger_keyword,source_board,post_id,title,author,publish_time,like_count,comment_count,content,image_url,original_url from social_post</sql>
+    <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.SocialPost" resultMap="R">
+        <include refid="cols"/><where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="triggerKeyword!=null and triggerKeyword!=''">AND trigger_keyword like concat('%',#{triggerKeyword},'%')</if>
+            <if test="author!=null and author!=''">AND author like concat('%',#{author},'%')</if>
+            <if test="searchValue!=null and searchValue!=''">AND (title like concat('%',#{searchValue},'%') OR content like concat('%',#{searchValue},'%'))</if>
+        </where>order by crawl_time desc
+    </select>
+    <select id="selectById" parameterType="String" resultMap="R">
+        <include refid="cols"/> where uuid=#{uuid}
+    </select>
+    <select id="selectCount" parameterType="com.ruoyi.system.domain.sentiment.SocialPost" resultType="long">
+        select count(*) from social_post<where>
+            <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
+            <if test="triggerKeyword!=null and triggerKeyword!=''">AND trigger_keyword like concat('%',#{triggerKeyword},'%')</if>
+            <if test="searchValue!=null and searchValue!=''">AND (title like concat('%',#{searchValue},'%') OR content like concat('%',#{searchValue},'%'))</if>
+        </where>
+    </select>
+    <delete id="deleteByUuid" parameterType="String">delete from social_post where uuid=#{uuid}</delete>
+    <delete id="deleteByUuids" parameterType="String">delete from social_post where uuid in <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach></delete>
+</mapper>

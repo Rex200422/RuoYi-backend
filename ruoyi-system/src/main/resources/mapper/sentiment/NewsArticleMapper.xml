@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.NewsArticleMapper">
+    <resultMap type="com.ruoyi.system.domain.sentiment.NewsArticle" id="R">
+        <result property="id" column="id"/>
+        <result property="title" column="title"/>
+        <result property="url" column="url"/>
+        <result property="publishDate" column="publish_date"/>
+        <result property="keywords" column="keywords"/>
+        <result property="content" column="content"/>
+        <result property="source" column="source"/>
+    </resultMap>
+    <sql id="cols">select id,title,url,publish_date,keywords,content,source from news_article</sql>
+    <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.NewsArticle" resultMap="R">
+        <include refid="cols"/><where>
+            <if test="source!=null and source!=''">AND source=#{source}</if>
+            <if test="keywords!=null and keywords!=''">AND keywords like concat('%',#{keywords},'%')</if>
+            <if test="searchValue!=null and searchValue!=''">AND (title like concat('%',#{searchValue},'%') OR content like concat('%',#{searchValue},'%'))</if>
+        </where>order by crawl_time desc
+    </select>
+    <select id="selectById" parameterType="Long" resultMap="R">
+        <include refid="cols"/> where id=#{id}
+    </select>
+    <select id="selectCount" parameterType="com.ruoyi.system.domain.sentiment.NewsArticle" resultType="long">
+        select count(*) from news_article<where>
+            <if test="source!=null and source!=''">AND source=#{source}</if>
+            <if test="searchValue!=null and searchValue!=''">AND (title like concat('%',#{searchValue},'%') OR content like concat('%',#{searchValue},'%'))</if>
+        </where>
+    </select>
+    <delete id="deleteByIds" parameterType="String">delete from news_article where id in <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach></delete>
+</mapper>

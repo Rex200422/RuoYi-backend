@@ -1,0 +1,272 @@
+"""
+U.S. Treasury News Press Releases Spider v3
+Fixes:
+  - Date: extract from <time class='datetime'> (first in body, skip banner/header)
+  - Content: extract from <meta property='og:description'> (full article text)
+  - URLs: use short slugs from listing page as-is
+"""
+import sys
+import re
+import time
+import random
+import warnings
+
+import requests
+from bs4 import BeautifulSoup
+import pymysql
+
+warnings.filterwarnings("ignore")
+
+# --------------- config ---------------
+PROXIES = {
+    "http": "http://192.168.0.14:7890/",
+    "https": "http://192.168.0.14:7890/",
+}
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "200422",
+    "database": "ry-vue",
+    "charset": "utf8mb4",
+}
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+    )
+}
+
+MAIN_KEYWORDS = ["china", "taiwan"]
+SUB_KEYWORDS = [
+    "trade", "technology", "military", "sanctions",
+    "tariff", "investment", "financial",
+]
+ALL_KEYWORDS = MAIN_KEYWORDS + SUB_KEYWORDS
+
+MAX_PAGES = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+MAX_ARTICLES = int(sys.argv[2]) if len(sys.argv) > 2 else 2
+BASE_URL = "https://home.treasury.gov/news/press-releases"
+
+# --------------- helpers ---------------
+
+def get_db():
+    return pymysql.connect(**DB_CONFIG)
+
+
+def clean(text):
+    """Collapse whitespace and strip."""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_html_tags(html_str):
+    """Remove all HTML tags and decode entities, returning plain text."""
+    if not html_str:
+        return ""
+    soup = BeautifulSoup(html_str, "html.parser")
+    return clean(soup.get_text(" ", strip=True))
+
+
+def extract_kw(text):
+    """Return comma-separated matched keywords."""
+    t = text.lower()
+    return ",".join(sorted(
+        k for k in ALL_KEYWORDS
+        if re.search(rf"\b{k.replace('-', '[- ]')}\b", t)
+    ))
+
+
+def matches_main_keywords(title, content):
+    """Return True if title or content contains any main keyword."""
+    combined = (title + " " + content).lower()
+    return any(kw in combined for kw in MAIN_KEYWORDS)
+
+
+# --------------- extraction ---------------
+
+def extract_og_description(soup):
+    """
+    Extract article content from <meta property="og:description">.
+    This tag contains the full article text on Treasury pages.
+    """
+    meta = soup.find("meta", attrs={"property": "og:description"})
+    if meta and meta.get("content"):
+        return strip_html_tags(meta["content"])
+    # fallback: try name="description"
+    meta = soup.find("meta", attrs={"name": "description"})
+    if meta and meta.get("content"):
+        return strip_html_tags(meta["content"])
+    return ""
+
+
+def extract_article_date(soup):
+    """
+    Extract the article date from the first <time class='datetime'> element
+    that is inside the article body — NOT from the banner, navigation, or
+    header area.
+
+    The America 250th Anniversary banner contains a <time> with
+    'July 4, 2026'; we skip any <time> whose text contains '2026' and
+    sits inside a header/banner/nav element.
+    """
+    # Find all <time class='datetime'> tags with a datetime attribute
+    time_tags = soup.find_all("time", class_="datetime")
+    if not time_tags:
+        # broader fallback: any <time> with datetime attr
+        time_tags = soup.find_all("time", attrs={"datetime": True})
+
+    # Skip zones: header, nav, footer, banner, .hero, .announcement
+    skip_parents = {"header", "nav", "footer", "banner"}
+    skip_classes = {"hero", "banner", "announcement", "am250"}
+
+    for t_tag in time_tags:
+        # Check if this <time> is inside a skip zone
+        parent = t_tag.parent
+        in_skip = False
+        depth = 0
+        while parent and depth < 10:
+            tag_name = parent.name or ""
+            tag_class = " ".join(parent.get("class", []))
+            if tag_name in skip_parents or any(
+                sc in tag_class.lower() for sc in skip_classes
+            ):
+                in_skip = True
+                break
+            parent = parent.parent
+            depth += 1
+
+        if in_skip:
+            continue
+
+        # Extract the datetime attribute (ISO format)
+        dt_attr = t_tag.get("datetime", "")
+        # Also grab the visible text
+        dt_text = clean(t_tag.get_text())
+
+        # Skip obvious banner dates (e.g. "July 4, 2026" for America 250)
+        if dt_text and "2026" in dt_text:
+            # Check if this is a banner-like date — if the datetime attr
+            # matches July 4, 2026, skip it
+            if "07-04" in dt_attr or "2026-07-04" in dt_attr:
+                continue
+
+        # Prefer the visible text as it's human-readable
+        if dt_text:
+            return dt_text
+        if dt_attr:
+            return dt_attr
+
+    return ""
+
+
+# --------------- main crawl ---------------
+
+def crawl():
+    print("=== U.S. Treasury Spider v3 ===")
+    session = requests.Session()
+    conn = get_db()
+    cur = conn.cursor()
+    count = 0
+    visited = set()
+
+    try:
+        for pg in range(1, MAX_PAGES + 1):
+            if count >= MAX_ARTICLES:
+                break
+
+            url = BASE_URL if pg == 1 else f"{BASE_URL}?page={pg}"
+            print(f"\nPage {pg}: {url}")
+
+            try:
+                r = session.get(
+                    url, headers=HEADERS, proxies=PROXIES,
+                    timeout=30, verify=False,
+                )
+                soup = BeautifulSoup(r.text, "html.parser")
+
+                # Find article links — they point to /news/press-releases/<slug>
+                links = soup.select("a[href*='/news/press-releases/']")
+                # Deduplicate while preserving order
+                seen = set()
+                unique_links = []
+                for a in links:
+                    href = a.get("href", "").strip()
+                    if not href or "/news/press-releases/" not in href:
+                        continue
+                    if href.startswith("/"):
+                        href = "https://home.treasury.gov" + href
+                    if href in seen:
+                        continue
+                    seen.add(href)
+                    unique_links.append(a)
+
+                print(f"  Found {len(unique_links)} article links")
+
+                for a in unique_links:
+                    if count >= MAX_ARTICLES:
+                        break
+
+                    href = a.get("href", "").strip()
+                    if href.startswith("/"):
+                        href = "https://home.treasury.gov" + href
+
+                    if href in visited:
+                        continue
+                    visited.add(href)
+
+                    title = clean(a.get_text())
+                    if len(title) < 5:
+                        continue
+
+                    # Fetch detail page
+                    try:
+                        r2 = session.get(
+                            href, headers=HEADERS, proxies=PROXIES,
+                            timeout=30, verify=False,
+                        )
+                        s2 = BeautifulSoup(r2.text, "html.parser")
+                        content = extract_og_description(s2)
+                        date = extract_article_date(s2)
+                    except Exception as e:
+                        print(f"    [WARN] Detail fetch failed: {e}")
+                        content = ""
+                        date = ""
+
+                    # Keyword filter: check title + content
+                    if not matches_main_keywords(title, content):
+                        print(f"    Skip (no keyword): {title[:60]}")
+                        continue
+
+                    # Store
+                    keywords_str = extract_kw(title + " " + content)
+                    cur.execute(
+                        """INSERT INTO news_article
+                           (title, url, publish_date, keywords, content, source)
+                           VALUES (%s, %s, %s, %s, %s, %s)
+                           ON DUPLICATE KEY UPDATE
+                             content=VALUES(content),
+                             publish_date=VALUES(publish_date),
+                             keywords=VALUES(keywords)""",
+                        (title, href, date, keywords_str, content, "U.S. Treasury"),
+                    )
+                    conn.commit()
+                    count += 1
+                    print(
+                        f"    [{count}] {title[:60]}\n"
+                        f"      Date: {date or '(none)'}\n"
+                        f"      Content length: {len(content)} chars\n"
+                        f"      Keywords: {keywords_str}"
+                    )
+                    time.sleep(random.uniform(1.5, 3))
+
+            except Exception as e:
+                print(f"  [ERR] Page {pg} failed: {e}")
+
+    finally:
+        cur.close()
+        conn.close()
+
+    print(f"\n=== Done. Total saved: {count} articles ===")
+
+
+if __name__ == "__main__":
+    crawl()
