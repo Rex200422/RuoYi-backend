@@ -85,7 +85,8 @@ def save_post(cur, p):
 
 def save_comment(cur, c):
     sql = """INSERT INTO social_comment (post_id,title,comment_id,commenter,comment_content,like_count,comment_time)
-    VALUES(%s,%s,%s,%s,%s,%s,%s)"""
+    VALUES(%s,%s,%s,%s,%s,%s,%s)
+    ON DUPLICATE KEY UPDATE like_count=VALUES(like_count), comment_content=VALUES(comment_content)"""
     cur.execute(sql, (c["post_id"],c["title"],c["comment_id"],c["commenter"],c["comment_content"],c["like_count"],c["comment_time"]))
 
 def get_image_urls(record, did=None):

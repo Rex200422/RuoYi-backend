@@ -14,6 +14,29 @@ CNN_RSS_FEEDS = ["http://rss.cnn.com/rss/edition.rss", "http://rss.cnn.com/rss/e
 
 def get_db(): return pymysql.connect(**DB_CONFIG)
 def clean(text): return re.sub(r"\s+", " ", text).strip()
+# 页脚/版权等无用文本模式
+BOILERPLATE_PATTERNS = [
+    r"©\s*\d{4}\s*Cable News Network",
+    r"All Rights Reserved",
+    r"Most stock quote data",
+    r"Chicago Mercantile",
+    r"Scan the QR code",
+    r"Download the CNN app",
+    r"CNN values your feedback",
+    r"Cable News Network.*Warner",
+    r"A Warner Bros",
+    r"CNN Sans",
+    r"Sign up for CNN Newsletters",
+]
+
+def is_boilerplate(text):
+    """检查是否是页脚/版权等无用内容"""
+    for pattern in BOILERPLATE_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
 
 def update_log_start(log_id):
     """Update crawl_log start_time when crawl begins."""
@@ -71,7 +94,7 @@ def extract_keywords(text):
     return ",".join(sorted([k for k in ["china","taiwan","trade","technology","military","economy","politics","health","climate"] if re.search(rf"\b{k}\b", t)]))
 
 def get_article_content(url):
-    """获取文章正文 - 保留HTML格式"""
+    """从CNN文章提取全文内容，保留段落格式"""
     invalid = ["/collections/", "/video/", "/interactive/", "live-news"]
     if any(kw in url for kw in invalid):
         return ""
@@ -79,38 +102,55 @@ def get_article_content(url):
         try:
             r = requests.get(url, headers=HEADERS, proxies=PROXIES, timeout=25, verify=False, allow_redirects=True)
             r.raise_for_status()
-            soup = BeautifulSoup(r.text, "html.parser")
-
-            # 优先找 CNN 正文区域
-            content_parts = []
-            p_tags = soup.find_all("p", class_="paragraph")
-            if not p_tags:
-                p_tags = soup.find_all("div", class_="zn-body__paragraph")
-            if not p_tags:
-                # 通用兜底：所有 p 标签
-                for p in soup.find_all("p"):
-                    text = clean(p.get_text())
-                    if len(text) > 20:
-                        content_parts.append(f"<p>{text}</p>")
-            else:
-                for p in p_tags:
-                    text = clean(p.get_text())
-                    if text:
-                        content_parts.append(f"<p>{text}</p>")
-
-            # 也找 h2/h3 标题
-            for h in soup.find_all(["h2", "h3"]):
-                text = clean(h.get_text())
-                if text and len(text) > 5:
-                    content_parts.append(f"<{h.name}>{text}</{h.name}>")
-
-            content = "\n".join(content_parts)
-            return content[:8000] if len(content) >= 50 else ""
+            # 如果最终URL变成了分类页面则跳过
+            final_url = r.url
+            if any(x in final_url for x in ["/specials/", "/videos/", "utm_source=section"]):
+                return ""
+            text = r.text
+            # 方法1: 从嵌入script中提取articleBody（CNN全文）
+            marker = 'articleBody'
+            pos = text.find(marker)
+            while pos != -1:
+                s = text.find('"', pos + 12)
+                if s == -1: break
+                e = s + 1
+                while e < len(text):
+                    if text[e] == chr(92) and e + 1 < len(text):
+                        e += 2
+                        continue
+                    if text[e] == chr(34):
+                        break
+                    e += 1
+                if e > s + 100:
+                    body = text[s+1:e]
+                    body = body.replace('\\n', chr(10)).replace('\\/', '/').replace('\\u003C', '<').replace('\\u003E', '>')
+                    body = re.sub(r'<[^>]+>', '', body)
+                    if len(body) > 100:
+                        paras = [p.strip() for p in body.split(chr(10)) if p.strip()]
+                        if len(paras) <= 1:
+                            paras = [p.strip() for p in re.split(r'\s{3,}', body) if p.strip()]
+                        parts = []
+                        for p in paras:
+                            if len(p) > 10 and not is_boilerplate(p):
+                                parts.append('<p>' + p + '</p>')
+                        if parts:
+                            return chr(10).join(parts)[:8000]
+                pos = text.find(marker, pos + 1)
+            # 方法2: meta description (fallback)
+            soup = BeautifulSoup(text, "html.parser")
+            for meta in soup.find_all("meta"):
+                name = meta.get("name", "") or meta.get("property", "")
+                val = meta.get("content", "")
+                if name in ("description", "og:description") and val:
+                    if not is_boilerplate(val) and len(val) > 30:
+                        return '<p>' + val + '</p>'
+            return ""
         except Exception as e:
             if attempt == 2:
                 print(f"  [WARN] 正文抓取失败: {url[:50]}... | {e}")
                 return ""
             time.sleep(2)
+
 
 def crawl_cnn(max_articles, keyword=None):
     """Core crawl logic. Returns (items_found, items_saved) counts."""

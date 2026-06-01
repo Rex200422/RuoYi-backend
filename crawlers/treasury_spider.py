@@ -131,15 +131,60 @@ def update_config_last_crawl(config_id):
 
 # --------------- extraction ---------------
 
-def extract_og_description(soup):
+def extract_og_description(soup, url=None):
     """
-    Extract article content from <meta property="og:description">.
-    This tag contains the full article text on Treasury pages.
+    Extract article content preserving paragraph structure.
+    Priority: Playwright rendered text > og:description with smart splitting
     """
-    meta = soup.find("meta", attrs={"property": "og:description"})
-    if meta and meta.get("content"):
-        return strip_html_tags(meta["content"])
-    # fallback: try name="description"
+    # 方法1: 尝试从main/section标签获取（JS渲染后）
+    nav_keywords = ["role of the treasury", "officials", "organizational",
+        "domestic finance", "economic policy", "general counsel", "international affairs",
+        "management", "public affairs", "orders and directives", "terrorism",
+        "enter search", "about treasury", "general information", "inspectors general"]
+    for tag_name in ["main", "article", "section"]:
+        tag = soup.find(tag_name)
+        if tag:
+            text = tag.get_text(separator="\n", strip=True)
+            lines = [l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10]
+            # 过滤导航内容
+            filtered = [l for l in lines if not any(kw in l.lower() for kw in nav_keywords)]
+            # 必须有至少5段非导航内容，且包含WASHINGTON或长文本
+            has_article = any("WASHINGTON" in l or len(l) > 100 for l in filtered)
+            if len(filtered) > 5 and has_article:
+                return "\n".join(filtered)
+
+    # 方法2: Playwright获取渲染后的段落（如果URL提供）
+    if url:
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True, proxy={"server": PROXY})
+                page = browser.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(3000)
+                body_text = page.evaluate("() => document.body.innerText")
+                browser.close()
+
+                lines = [l.strip() for l in body_text.split("\n") if l.strip()]
+                # 找正文起始（WASHINGTON开头或日期后）
+                start = -1
+                for i, line in enumerate(lines):
+                    if line.startswith("WASHINGTON") or line.startswith("NEW YORK") or re.match(r"^[A-Z][a-z]+ \d{1,2}, \d{4}", line):
+                        start = i
+                        break
+                if start > -1:
+                    end = len(lines)
+                    for i in range(start + 5, len(lines)):
+                        if lines[i].strip() in ("###", "---") or "Contact:" in lines[i] or "Media Contact" in lines[i]:
+                            end = i
+                            break
+                    article = lines[start:end]
+                    if len(article) > 3:
+                        return "\n".join(article)
+        except Exception:
+            pass
+
+    # 方法3: meta description fallback
     meta = soup.find("meta", attrs={"name": "description"})
     if meta and meta.get("content"):
         return strip_html_tags(meta["content"])
@@ -274,7 +319,7 @@ def crawl(max_pages, max_articles):
                             timeout=30, verify=False,
                         )
                         s2 = BeautifulSoup(r2.text, "html.parser")
-                        content = extract_og_description(s2)
+                        content = extract_og_description(s2, url=href)
                         date = extract_article_date(s2)
                     except Exception as e:
                         print(f"    [WARN] Detail fetch failed: {e}")
@@ -283,10 +328,15 @@ def crawl(max_pages, max_articles):
 
                     items_found += 1
 
-                    # Keyword filter: check title + content
+                    # 内容获取后，再做关键词过滤（标题+内容都检查）
                     if not matches_main_keywords(title, content):
-                        print(f"    Skip (no keyword): {title[:60]}")
+                        print(f"    Skip (no keyword): {title[:50]}")
                         continue
+
+                    # 将纯文本转成HTML段落
+                    if "\n" in content:
+                        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+                        content = "\n".join(f"<p>{p}</p>" for p in paragraphs)
 
                     # Store
                     keywords_str = extract_kw(title + " " + content)
