@@ -33,19 +33,8 @@ def download_image(url, article_id, idx=0):
         print(f"    [IMG] 下载失败: {e}")
         return ""
 
-
 PROXY = "http://192.168.0.14:7890/"
 
-def get_proxy_for_playwright():
-    """Check if proxy is available, return proxy config or None."""
-    import socket
-    try:
-        s = socket.create_connection(("192.168.0.14", 7890), timeout=2)
-        s.close()
-        return {"server": PROXY}
-    except Exception:
-        print("    [INFO] Proxy unavailable, using direct connection")
-        return None
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "ASPI"
 BASE_URL = "https://www.aspistrategist.org.au"
@@ -125,12 +114,13 @@ def is_valid_article(url):
 def crawl(max_pages, max_articles):
     items_found = 0
     items_saved = 0
+    page_failures = 0
     visited_urls = set()
     conn = get_db()
     cur = conn.cursor()
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy=get_proxy_for_playwright())
+            browser = p.chromium.launch(headless=True, proxy={"server": PROXY})
             page = browser.new_page()
             news_list = []
             for page_num in range(1, max_pages + 1):
@@ -141,6 +131,7 @@ def crawl(max_pages, max_articles):
                     page.wait_for_load_state("domcontentloaded")
                 except Exception as e:
                     print(f"页面失败：{e}")
+                    page_failures += 1
                     continue
                 articles = page.locator("article.post")
                 print(f"文章块：{articles.count()}")
@@ -158,6 +149,8 @@ def crawl(max_pages, max_articles):
                                 news_list.append({"title": title, "url": href})
                                 print(f"收录：{title}")
                             break
+            if page_failures > 0 and len(news_list) == 0:
+                raise Exception(f"所有列表页访问失败({page_failures}次)，代理可能不可用")
             print(f"\n总文章数：{len(news_list)}")
             for news in news_list:
                 if items_saved >= max_articles:

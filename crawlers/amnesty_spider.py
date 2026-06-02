@@ -33,19 +33,8 @@ def download_image(url, article_id, idx=0):
         print(f"    [IMG] 下载失败: {e}")
         return ""
 
-
 PROXY = "http://192.168.0.14:7890/"
 
-def get_proxy_for_playwright():
-    """Check if proxy is available, return proxy config or None."""
-    import socket
-    try:
-        s = socket.create_connection(("192.168.0.14", 7890), timeout=2)
-        s.close()
-        return {"server": PROXY}
-    except Exception:
-        print("    [INFO] Proxy unavailable, using direct connection")
-        return None
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "Amnesty"
 BASE_URL = "https://www.amnesty.org"
@@ -136,12 +125,13 @@ def is_cookie_title(title):
 def crawl(max_pages, max_articles):
     items_found = 0
     items_saved = 0
+    page_failures = 0
     visited_urls = set()
     conn = get_db()
     cur = conn.cursor()
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy=get_proxy_for_playwright(),
+            browser = p.chromium.launch(headless=True, proxy={"server": PROXY},
                                         args=["--disable-blink-features=AutomationControlled"])
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -160,6 +150,7 @@ def crawl(max_pages, max_articles):
                     except: pass
                 except Exception as e:
                     print(f"页面失败：{e}")
+                    page_failures += 1
                     continue
                 news_section = list_page.locator("section#news")
                 if news_section.count() == 0:
@@ -184,6 +175,8 @@ def crawl(max_pages, max_articles):
                                     break
                     except Exception as e:
                         print(f"列表文章错误：{e}")
+            if page_failures > 0 and len(news_list) == 0:
+                raise Exception(f"所有列表页访问失败({page_failures}次)，代理可能不可用")
             print(f"\n总文章数：{len(news_list)}")
 
             for news in news_list:
