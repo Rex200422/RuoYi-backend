@@ -81,10 +81,17 @@ def extract_date(page):
         return clean(t.first.inner_text())
     return ""
 
+COOKIE_TITLES = ["your choice regarding cookies", "cookie", "privacy policy", "cookie policy", "terms of use"]
+
 def is_valid_article(url):
     if not url.startswith(BASE_URL): return False
     bad = ["/search/", "/campaigns/", "/take-action/", "/donate/", "/contact/", "/petition/"]
     return not any(x in url for x in bad)
+
+def is_cookie_title(title):
+    """Check if title is from cookie consent banner."""
+    t = title.lower().strip()
+    return any(ct in t for ct in COOKIE_TITLES)
 
 def crawl(max_pages, max_articles):
     items_found = 0
@@ -109,7 +116,7 @@ def crawl(max_pages, max_articles):
                 try:
                     list_page.goto(url, timeout=60000)
                     list_page.wait_for_load_state("networkidle")
-                    try: list_page.locator("button:has-text('Accept all')").click(timeout=3000)
+                    try: list_page.locator("button:has-text('ACCEPT')").click(timeout=3000)
                     except: pass
                 except Exception as e:
                     print(f"页面失败：{e}")
@@ -148,10 +155,18 @@ def crawl(max_pages, max_articles):
                     detail_page = context.new_page()
                     detail_page.goto(news["url"], timeout=60000)
                     detail_page.wait_for_load_state("networkidle")
-                    try: detail_page.locator("button:has-text('Accept all')").click(timeout=3000)
+                    try: detail_page.locator("button:has-text('ACCEPT')").click(timeout=3000)
                     except: pass
-                    h1 = detail_page.locator("h1")
+                    detail_page.wait_for_timeout(3000)
+                    try: detail_page.locator("button:has-text('ACCEPT')").click(timeout=5000)
+                    except: pass
+                    detail_page.wait_for_timeout(1000)
+                    h1 = detail_page.locator("article h1")
+                    if h1.count() == 0:
+                        h1 = detail_page.locator("h1")
                     title = clean(h1.first.inner_text()) if h1.count() > 0 else clean(detail_page.title())
+                    if is_cookie_title(title):
+                        title = clean(detail_page.title())
                     date = extract_date(detail_page)
                     cover_image = extract_cover_image(detail_page)
                     article_el = detail_page.locator("article")
