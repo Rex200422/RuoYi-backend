@@ -5,8 +5,6 @@ import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
 import pymysql
 from content_utils import extract_content_playwright, remove_boilerplate_text
-from content_utils import extract_content_playwright, remove_boilerplate_text
-from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 
@@ -22,7 +20,10 @@ def download_image(url, article_id, idx=0):
     if os.path.exists(local_path):
         return filename
     try:
-        resp = req_lib.get(url, proxies={"http": PROXY, "https": PROXY}, timeout=30)
+        try:
+            resp = req_lib.get(url, proxies={"http": PROXY, "https": PROXY}, timeout=30)
+        except Exception:
+            resp = req_lib.get(url, timeout=30)
         resp.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(resp.content)
@@ -34,6 +35,17 @@ def download_image(url, article_id, idx=0):
 
 
 PROXY = "http://192.168.0.14:7890/"
+
+def get_proxy_for_playwright():
+    """Check if proxy is available, return proxy config or None."""
+    import socket
+    try:
+        s = socket.create_connection(("192.168.0.14", 7890), timeout=2)
+        s.close()
+        return {"server": PROXY}
+    except Exception:
+        print("    [INFO] Proxy unavailable, using direct connection")
+        return None
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "ASPI"
 BASE_URL = "https://www.aspistrategist.org.au"
@@ -118,7 +130,7 @@ def crawl(max_pages, max_articles):
     cur = conn.cursor()
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy={"server": PROXY})
+            browser = p.chromium.launch(headless=True, proxy=get_proxy_for_playwright())
             page = browser.new_page()
             news_list = []
             for page_num in range(1, max_pages + 1):
@@ -160,12 +172,7 @@ def crawl(max_pages, max_articles):
                     date = extract_date(page)
                     cover_url = extract_cover_image(page)
                     cover_image = download_image(cover_url, news["url"]) if cover_url else ""
-                    content = page.locator("article.post").first.inner_text()
-                    content = clean(content)
-                    if not content:
-                        content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
-                    if not content:
-                        content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
+                    content = extract_content_playwright(page, "article.post")
                     if not content:
                         content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
                     if not contains_keywords(content):
