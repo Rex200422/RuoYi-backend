@@ -4,6 +4,7 @@ Amnesty International News Spider - Playwright
 import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
 import pymysql
+from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 
@@ -196,7 +197,10 @@ def crawl(max_pages, max_articles):
                     cover_url = extract_cover_image(detail_page)
                     cover_image = download_image(cover_url, news["url"]) if cover_url else ""
                     article_el = detail_page.locator("article")
-                    content = clean(article_el.first.inner_text()) if article_el.count() > 0 else ""
+                    content = extract_content_playwright(detail_page, "article") if article_el.count() > 0 else ""
+                    if not content and article_el.count() > 0:
+                        content = remove_boilerplate_text(article_el.first.inner_text())
+                    content = clean(content)
                     detail_page.close()
                     if len(content) < 300:
                         print("正文太短")

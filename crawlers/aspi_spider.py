@@ -4,6 +4,9 @@ ASPI (Australian Strategic Policy Institute) News Spider - Playwright
 import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
 import pymysql
+from content_utils import extract_content_playwright, remove_boilerplate_text
+from content_utils import extract_content_playwright, remove_boilerplate_text
+from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 
@@ -159,6 +162,12 @@ def crawl(max_pages, max_articles):
                     cover_image = download_image(cover_url, news["url"]) if cover_url else ""
                     content = page.locator("article.post").first.inner_text()
                     content = clean(content)
+                    if not content:
+                        content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
+                    if not content:
+                        content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
+                    if not content:
+                        content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
                     if not contains_keywords(content):
                         print("跳过")
                         continue

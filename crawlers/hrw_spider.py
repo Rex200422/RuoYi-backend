@@ -4,6 +4,7 @@ HRW (Human Rights Watch) News Spider - Playwright
 import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
 import pymysql
+from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 
