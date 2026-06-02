@@ -7,10 +7,11 @@
         <result property="url" column="url"/>
         <result property="publishDate" column="publish_date"/>
         <result property="keywords" column="keywords"/>
+        <result property="coverImage" column="cover_image"/>
         <result property="content" column="content"/>
         <result property="source" column="source"/>
     </resultMap>
-    <sql id="cols">select id,title,url,publish_date,keywords,content,source from news_article</sql>
+    <sql id="cols">select id,title,url,publish_date,keywords,cover_image,content,source from news_article</sql>
     <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.NewsArticle" resultMap="R">
         <include refid="cols"/><where>
             <if test="source!=null and source!=''">AND source=#{source}</if>

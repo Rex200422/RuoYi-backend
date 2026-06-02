@@ -9,6 +9,7 @@ public class NewsArticle extends BaseEntity {
     private String url;
     private String publishDate;
     private String keywords;
+    private String coverImage;
     private String content;
     private String source;
 
@@ -17,6 +18,7 @@ public class NewsArticle extends BaseEntity {
     public String getUrl() { return url; } public void setUrl(String v) { this.url = v; }
     public String getPublishDate() { return publishDate; } public void setPublishDate(String v) { this.publishDate = v; }
     public String getKeywords() { return keywords; } public void setKeywords(String v) { this.keywords = v; }
+    public String getCoverImage() { return coverImage; } public void setCoverImage(String v) { this.coverImage = v; }
     public String getContent() { return content; } public void setContent(String v) { this.content = v; }
     public String getSource() { return source; } public void setSource(String v) { this.source = v; }
 }
