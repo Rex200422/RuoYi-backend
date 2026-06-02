@@ -11,6 +11,7 @@ import time
 import random
 import argparse
 import warnings
+from content_utils import clean_content_html
 
 import requests
 from bs4 import BeautifulSoup
@@ -151,6 +152,11 @@ def extract_og_description(soup, url=None):
             # 必须有至少5段非导航内容，且包含WASHINGTON或长文本
             has_article = any("WASHINGTON" in l or len(l) > 100 for l in filtered)
             if len(filtered) > 5 and has_article:
+                # Convert text lines to HTML for cleaning
+                text_html = "\n".join(f"<p>{l}</p>" for l in filtered)
+                cleaned = clean_content_html(text_html)
+                if cleaned:
+                    return cleaned
                 return "\n".join(filtered)
 
     # 方法2: Playwright获取渲染后的段落（如果URL提供）
@@ -180,6 +186,10 @@ def extract_og_description(soup, url=None):
                             break
                     article = lines[start:end]
                     if len(article) > 3:
+                        text_html = "\n".join(f"<p>{l}</p>" for l in article)
+                        cleaned = clean_content_html(text_html)
+                        if cleaned:
+                            return cleaned
                         return "\n".join(article)
         except Exception:
             pass

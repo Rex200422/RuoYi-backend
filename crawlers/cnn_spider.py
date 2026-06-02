@@ -4,6 +4,7 @@ CNN 报刊杂志新闻爬虫 v2 - 保留HTML格式
 import os, sys, re, time, random, argparse, requests
 from bs4 import BeautifulSoup
 import pymysql
+from content_utils import clean_content_html
 
 PROXY = "http://192.168.0.14:7890/"
 PROXIES = {"http": PROXY, "https": PROXY}
@@ -18,6 +19,17 @@ def clean(text): return re.sub(r"\s+", " ", text).strip()
 BOILERPLATE_PATTERNS = [
     r"©\s*\d{4}\s*Cable News Network",
     r"All Rights Reserved",
+    r"Most stock quote data",
+    r"Chicago Mercantile",
+    r"Click to expand\s*Image",
+    r"^Image:.*",
+    r"^Photo:.*",
+    r"\(Photo\).*",
+    r"Share\s*(This|on Facebook|on Twitter)",
+    r"^Share$",
+    r"^Print This Post$",
+    r"^SHARE$",
+    r"^\|.*$",
     r"Most stock quote data",
     r"Chicago Mercantile",
     r"Scan the QR code",
@@ -134,7 +146,8 @@ def get_article_content(url):
                             if len(p) > 10 and not is_boilerplate(p):
                                 parts.append('<p>' + p + '</p>')
                         if parts:
-                            return chr(10).join(parts)[:8000]
+                            html = chr(10).join(parts)
+                            return clean_content_html(html)[:8000]
                 pos = text.find(marker, pos + 1)
             # 方法2: meta description (fallback)
             soup = BeautifulSoup(text, "html.parser")
