@@ -5,6 +5,31 @@ import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
 import pymysql
 
+import hashlib, requests as req_lib
+
+IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
+
+def download_image(url, article_id, idx=0):
+    """下载图片到本地，返回本地文件名"""
+    if not url:
+        return ""
+    aid_hash = hashlib.md5(str(article_id).encode()).hexdigest()[:16]
+    filename = f"{aid_hash}_{idx}.jpg"
+    local_path = os.path.join(IMAGE_DIR, filename)
+    if os.path.exists(local_path):
+        return filename
+    try:
+        resp = req_lib.get(url, proxies={"http": PROXY, "https": PROXY}, timeout=30)
+        resp.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(resp.content)
+        print(f"    [IMG] 下载: {filename} ({len(resp.content)} bytes)")
+        return filename
+    except Exception as e:
+        print(f"    [IMG] 下载失败: {e}")
+        return ""
+
+
 PROXY = "http://192.168.0.14:7890/"
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "HRW"
@@ -137,7 +162,8 @@ def crawl(max_pages, max_articles):
                     h1 = page.locator("h1")
                     if h1.count() > 0: news["title"] = clean(h1.first.inner_text())
                     date = extract_date(page)
-                    cover_image = extract_cover_image(page)
+                    cover_url = extract_cover_image(page)
+                    cover_image = download_image(cover_url, news["url"]) if cover_url else ""
                     article_el = page.locator("article")
                     if article_el.count() == 0:
                         print("无正文")
@@ -152,7 +178,7 @@ def crawl(max_pages, max_articles):
                     keywords = extract_keywords(content)
                     article_data = {"title": news["title"], "url": news["url"], "date": date,
                                     "content": content[:5000], "keywords": keywords,
-                                    "cover_image": cover_image, "source": SITE_NAME}
+                                    "cover_image": "sentiment/images/" + cover_image if cover_image else "", "source": SITE_NAME}
                     save_article(cur, article_data)
                     conn.commit()
                     items_saved += 1
