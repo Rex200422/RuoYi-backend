@@ -57,7 +57,9 @@ def clean_content_html(html):
     
     # Remove elements by CSS class patterns
     for element in soup.find_all(True):
-        classes = element.get('class', [])
+        if not element.attrs:
+            continue
+        classes = element.get('class', []) or []
         if isinstance(classes, str):
             classes = [classes]
         class_str = " ".join(classes).lower()

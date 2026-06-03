@@ -183,7 +183,6 @@ def crawl(max_pages, max_articles):
                 if items_saved >= max_articles:
                     break
                 try:
-                    items_found += 1
                     print(f"\n采集：{news['title']}")
                     detail_page = context.new_page()
                     detail_page.goto(news["url"], timeout=60000)
@@ -212,8 +211,9 @@ def crawl(max_pages, max_articles):
                     if len(content) < 300:
                         print("正文太短")
                         continue
+                    items_found += 1
                     if not contains_keywords(content):
-                        print("跳过：无 China/Taiwan")
+                        print(f"跳过：无 China/Taiwan content_len={len(content)}")
                         continue
                     keywords = extract_keywords(content)
                     article_data = {"title": title, "url": news["url"], "date": date,

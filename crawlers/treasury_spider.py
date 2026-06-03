@@ -336,12 +336,12 @@ def crawl(max_pages, max_articles):
                         content = ""
                         date = ""
 
-                    items_found += 1
-
                     # 内容获取后，再做关键词过滤（标题+内容都检查）
                     if not matches_main_keywords(title, content):
                         print(f"    Skip (no keyword): {title[:50]}")
                         continue
+
+                    items_found += 1
 
                     # 将纯文本转成HTML段落
                     if "\n" in content:

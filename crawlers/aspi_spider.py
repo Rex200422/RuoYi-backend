@@ -156,7 +156,6 @@ def crawl(max_pages, max_articles):
                 if items_saved >= max_articles:
                     break
                 try:
-                    items_found += 1
                     print(f"\n采集：{news['title']}")
                     page.goto(news["url"], timeout=60000)
                     page.wait_for_load_state("domcontentloaded")
@@ -168,8 +167,9 @@ def crawl(max_pages, max_articles):
                     content = extract_content_playwright(page, "article.post")
                     if not content:
                         content = remove_boilerplate_text(page.locator("article.post").first.inner_text())
+                    items_found += 1
                     if not contains_keywords(content):
-                        print("跳过")
+                        print(f"跳过(无关键词) content_len={len(content)}")
                         continue
                     keywords = extract_keywords(content)
                     article_data = {"title": news["title"], "url": news["url"], "date": date,
