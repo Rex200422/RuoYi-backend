@@ -75,7 +75,7 @@ def update_config_last_crawl(config_id):
 
 def save_article(cursor, article):
     sql = """INSERT INTO news_article (title, url, publish_date, keywords, cover_image, content, source)
-    VALUES (%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE content=VALUES(content), keywords=VALUES(keywords), cover_image=VALUES(cover_image)"""
+    VALUES (%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE title=VALUES(title), publish_date=VALUES(publish_date), content=VALUES(content), keywords=VALUES(keywords), cover_image=VALUES(cover_image)"""
     cursor.execute(sql, (article["title"], article["url"], article["date"], article["keywords"], article.get("cover_image", ""), article["content"], article["source"]))
 
 def extract_keywords(text):

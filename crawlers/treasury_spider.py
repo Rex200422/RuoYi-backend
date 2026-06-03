@@ -355,6 +355,7 @@ def crawl(max_pages, max_articles):
                            (title, url, publish_date, keywords, content, source)
                            VALUES (%s, %s, %s, %s, %s, %s)
                            ON DUPLICATE KEY UPDATE
+                             title=VALUES(title),
                              content=VALUES(content),
                              publish_date=VALUES(publish_date),
                              keywords=VALUES(keywords)""",
