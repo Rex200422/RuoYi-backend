@@ -78,7 +78,7 @@ def clean_content_html(html):
     # Get all <p> tags as paragraphs
     paragraphs = []
     for p in soup.find_all('p'):
-        text = p.get_text(strip=True)
+        text = p.get_text(" ", strip=True)
         if not text:
             continue
         # Skip boilerplate
@@ -106,17 +106,37 @@ def clean_content_html(html):
     return "\n".join(paragraphs)
 
 
+def scroll_to_bottom(page):
+    """Scroll page incrementally to trigger lazy-loaded content."""
+    try:
+        total_height = page.evaluate("document.body.scrollHeight")
+        current = 0
+        while current < total_height:
+            current += 800
+            page.evaluate(f"window.scrollTo(0, {current})")
+            page.wait_for_timeout(400)
+        page.wait_for_timeout(2000)
+    except Exception:
+        pass
+
 def extract_content_playwright(page, selector="article", base_url=""):
     """
     Extract and clean article content from a Playwright page.
-    Uses innerHTML for structure preservation.
+    Scrolls to bottom first to trigger lazy load, then uses innerHTML.
     """
-    article = page.locator(selector)
-    if article.count() == 0:
-        return ""
+    # Scroll to trigger lazy-loaded content
+    scroll_to_bottom(page)
     
-    html = article.first.inner_html()
-    return clean_content_html(html)
+    # Try specific content selector first (more precise)
+    for sel in ["div.entry-content", selector]:
+        container = page.locator(sel)
+        if container.count() > 0:
+            html = container.first.inner_html()
+            result = clean_content_html(html)
+            if result and len(result) > 100:
+                return result
+    
+    return ""
 
 
 def remove_boilerplate_text(text):
