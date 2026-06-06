@@ -45,7 +45,7 @@ public class AiSummaryScheduler {
 
         CompletableFuture.runAsync(() -> {
             try {
-                generator.generate(1);
+                generator.generate(24);
             } catch (Exception e) {
                 log.error("[AI Summary] 生成异常: {}", e.getMessage());
             } finally {

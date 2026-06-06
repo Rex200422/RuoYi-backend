@@ -75,8 +75,20 @@ public class AiSummaryGenerator {
         log.info("[AI Summary] 新闻: {} 条, 帖子: {} 条, 评论: {} 条", news.size(), posts.size(), comments.size());
 
         if (news.isEmpty() && posts.isEmpty()) {
-            log.warn("[AI Summary] 无新数据，跳过");
-            return false;
+            // 尝试扩大时间窗口到12小时
+            LocalDateTime fallback = now.minusHours(24);
+            if (dataStart.isAfter(fallback)) {
+                log.info("[AI Summary] {}h内无数据，扩大到12小时", hours);
+                dataStart = fallback;
+                news = fetchNews(dataStart);
+                posts = fetchPosts(dataStart);
+                comments = fetchComments(dataStart);
+                log.info("[AI Summary] 扩大后: 新闻 {} 条, 帖子 {} 条, 评论 {} 条", news.size(), posts.size(), comments.size());
+            }
+            if (news.isEmpty() && posts.isEmpty()) {
+                log.warn("[AI Summary] 24h内仍无数据，跳过");
+                return false;
+            }
         }
 
         // 4. 预处理 + 构建 prompt
