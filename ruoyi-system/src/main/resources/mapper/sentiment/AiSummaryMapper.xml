@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.AiSummaryMapper">
+    <resultMap type="com.ruoyi.system.domain.sentiment.AiSummary" id="R">
+        <result property="id" column="id"/>
+        <result property="summaryType" column="summary_type"/>
+        <result property="title" column="title"/>
+        <result property="content" column="content"/>
+        <result property="riskLevel" column="risk_level"/>
+        <result property="dataStart" column="data_start"/>
+        <result property="dataEnd" column="data_end"/>
+        <result property="newsCount" column="news_count"/>
+        <result property="socialCount" column="social_count"/>
+        <result property="modelName" column="model_name"/>
+        <result property="generateTime" column="generate_time"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+    <sql id="cols">select id,summary_type,title,content,risk_level,data_start,data_end,news_count,social_count,model_name,generate_time,create_time from ai_summary</sql>
+    <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.AiSummary" resultMap="R">
+        <include refid="cols"/><where>
+            <if test="summaryType!=null and summaryType!=''">AND summary_type=#{summaryType}</if>
+            <if test="title!=null and title!=''">AND title like concat('%',#{title},'%')</if>
+            <if test="riskLevel!=null and riskLevel!=''">AND risk_level=#{riskLevel}</if>
+            <if test="modelName!=null and modelName!=''">AND model_name=#{modelName}</if>
+            <if test="searchValue!=null and searchValue!=''">AND (title like concat('%',#{searchValue},'%') OR content like concat('%',#{searchValue},'%'))</if>
+        </where>order by create_time desc
+    </select>
+    <select id="selectById" parameterType="Long" resultMap="R">
+        <include refid="cols"/> where id=#{id}
+    </select>
+    <select id="selectCount" parameterType="com.ruoyi.system.domain.sentiment.AiSummary" resultType="long">
+        select count(*) from ai_summary<where>
+            <if test="summaryType!=null and summaryType!=''">AND summary_type=#{summaryType}</if>
+            <if test="title!=null and title!=''">AND title like concat('%',#{title},'%')</if>
+            <if test="riskLevel!=null and riskLevel!=''">AND risk_level=#{riskLevel}</if>
+        </where>
+    </select>
+    <insert id="insert" parameterType="com.ruoyi.system.domain.sentiment.AiSummary" useGeneratedKeys="true" keyProperty="id">
+        insert into ai_summary(summary_type,title,content,risk_level,data_start,data_end,news_count,social_count,model_name,generate_time,create_time)
+        values(#{summaryType},#{title},#{content},#{riskLevel},#{dataStart},#{dataEnd},#{newsCount},#{socialCount},#{modelName},#{generateTime},now())
+    </insert>
+    <delete id="deleteByIds" parameterType="Long">delete from ai_summary where id in <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach></delete>
+    <select id="selectLatest" resultMap="R">
+        <include refid="cols"/> order by create_time desc limit 1
+    </select>
+</mapper>
