@@ -20,18 +20,20 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * AI Summary Generator - V3
+ * AI Summary Generator - V4
  * Layered data fetch (1h->6h->24h for posts, 12h->24h for news)
- * + dual-model pre-summarization (qwen3.5 4b) + generation (qwen3.6 36B)
- * + Thinking Preservation via previous summary in context.
+ * + dual-model: pre-summarization (qwen3.5 4b, fully in VRAM) + generation (qwen3.6 27B, 45/64 layers GPU)
+ * + Thinking Preservation: 4b pre-analysis → structured context → 27b final generation
+ * + keep_alive=-1: both models stay resident in memory (no swap)
  */
 @Service
 public class AiSummaryGenerator {
     private static final Logger log = LoggerFactory.getLogger(AiSummaryGenerator.class);
 
     private static final String OLLAMA_BASE = "http://200m.frpee.com:18138";
-    private static final String GENERATION_MODEL = "qwen3.6:27b";
-    private static final String PRESUMMARY_MODEL = "qwen3.5:4b-q4_K_M";
+    private static final String PRE_SUMMARY_MODEL = "qwen3.5:4b-q4_K_M";  // 4B: fully in VRAM (~3.4GB)
+    private static final String GENERATION_MODEL = "qwen3.6:27b-partial";  // 27B: 45/64 layers GPU + KV cache
+
 
     // Token estimation: Chinese ~1.5 tokens/char
     private static final double TOKEN_PER_CHAR = 1.5;
@@ -115,6 +117,10 @@ public class AiSummaryGenerator {
 
             // ---- Build prompt ----
             String dataSection = buildDataSection(posts, comments, news);
+
+            // ---- Save pre-summaries to DB for reuse ----
+            savePreSummaries(posts, news);
+
             int newsCount = news.size();
             int postCount = posts.size();
             int commentCount = comments.size();
@@ -123,7 +129,7 @@ public class AiSummaryGenerator {
             int promptTokens = estimateTokens(prompt);
             log.info("[AI Summary] Prompt estimated tokens: {} / {} (safe budget)", promptTokens, SAFE_TOKENS);
 
-            // ---- Call Ollama (generation model: qwen3.6 36B) ----
+            // ---- Call Ollama (generation model: qwen3.6 27B, 45/64 layers GPU) ----
             long startMs = System.currentTimeMillis();
             String content = callOllama(prompt, GENERATION_MODEL, 300);
             if (content == null) {
@@ -324,7 +330,7 @@ public class AiSummaryGenerator {
     /**
      * ALL items exceeding PRE_SUMMARY_THRESHOLD tokens get LLM pre-summary.
      * No truncation fallback — every long item goes through the presumer.
-     * Uses qwen3.5 4b for speed (~2s per call vs ~30s for 36B).
+     * Uses qwen3.5 4b (fully in VRAM, ~2s per call) for speed.
      */
     private void preSummarizeLongContent(List<Map<String, Object>> items, String type, Map<String, List<Map<String, Object>>> commentsByPost) {
         int processed = 0;
@@ -403,7 +409,7 @@ public class AiSummaryGenerator {
             }
         }
         if (processed > 0) {
-            log.info("[AI Summary] Pre-summarized {} {} items with {}", processed, type, PRESUMMARY_MODEL);
+            log.info("[AI Summary] Pre-summarized {} {} items with {}", processed, type, PRE_SUMMARY_MODEL);
         }
     }
 
@@ -416,15 +422,16 @@ public class AiSummaryGenerator {
         }
 
         try {
-            Map<String, Object> body = Map.of(
-                "model", PRESUMMARY_MODEL,
-                "messages", List.of(
-                    Map.of("role", "system", "content",
-                        "你是一个文本摘要助手。请用简洁的中文概括以下内容的核心要点。"),
-                    Map.of("role", "user", "content", prompt)
-                ),
-                "stream", false
-            );
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", PRE_SUMMARY_MODEL);
+            body.put("keep_alive", -1);
+            body.put("think", false);
+            body.put("messages", List.of(
+                Map.of("role", "system", "content",
+                    "你是一个文本摘要助手。请用简洁的中文概括以下内容的核心要点。直接输出摘要，不要思考过程。"),
+                Map.of("role", "user", "content", prompt)
+            ));
+            body.put("stream", false);
             String json = mapper.writeValueAsString(body);
 
             HttpClient client = HttpClient.newHttpClient();
@@ -648,15 +655,16 @@ public class AiSummaryGenerator {
      */
     private String callOllama(String prompt, String model, int timeoutSeconds) {
         try {
-            Map<String, Object> body = Map.of(
-                "model", model,
-                "messages", List.of(
-                    Map.of("role", "system", "content",
-                        "你是一个专业的舆情分析师，服务于一个舆情监测平台。"),
-                    Map.of("role", "user", "content", prompt)
-                ),
-                "stream", false
-            );
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", model);
+            body.put("keep_alive", -1);
+            body.put("think", false);
+            body.put("messages", List.of(
+                Map.of("role", "system", "content",
+                    "你是一个专业的舆情分析师，服务于一个舆情监测平台。请进行深度分析，直接输出简报内容。"),
+                Map.of("role", "user", "content", prompt)
+            ));
+            body.put("stream", false);
             String json = mapper.writeValueAsString(body);
 
             HttpClient client = HttpClient.newHttpClient();
