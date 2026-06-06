@@ -35,10 +35,10 @@ public class AiSummaryScheduler {
     private volatile boolean generating = false;
 
     /**
-     * 每30分钟触发（:00 和 :30）。
-     * 与爬虫错开：爬虫每5分钟间隔启动，简报在整点/半点生成。
+     * 每半点触发（如 1:30, 2:30, 3:30...）。
+     * 爬虫在整点启动，简报在半点生成，错开资源占用。
      */
-    @Scheduled(cron = "0 0,30 * * * *")
+    @Scheduled(cron = "0 30 * * * *")
     public void generateHourlySummary() {
         if (generating) {
             log.info("AI summary already generating, skipping this tick.");
