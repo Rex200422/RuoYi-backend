@@ -76,7 +76,6 @@ public class AiSummaryGenerator {
         if (news.isEmpty() && posts.isEmpty()) {
             log.warn("[AI Summary] 无新数据，跳过");
             return false;
-            }
         }
 
         // 4. 预处理 + 构建 prompt
