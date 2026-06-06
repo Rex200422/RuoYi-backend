@@ -45,6 +45,7 @@ public class AiSummaryGenerator {
     // Pre-summarization thresholds
     private static final int NEWS_SUMMARY_THRESHOLD = 1500;
     private static final int POST_SUMMARY_THRESHOLD = 800;
+    private static final int MAX_PRE_SUMMARIZE_CALLS = 10;  // Max Ollama pre-summary calls
 
     // Limits
     private static final int MAX_POSTS = 100;
@@ -299,6 +300,8 @@ public class AiSummaryGenerator {
      * Replaces the content field with the pre-summary (title always kept intact).
      */
     private void preSummarizeLongContent(List<Map<String, Object>> items, String type) {
+        int callCount = 0;
+        int maxCalls = "news".equals(type) ? MAX_PRE_SUMMARIZE_CALLS : MAX_PRE_SUMMARIZE_CALLS;
         for (Map<String, Object> item : items) {
             String title = str(item.get("title"));
             String content = str(item.get("content"));
@@ -308,24 +311,34 @@ public class AiSummaryGenerator {
             int tokens = estimateTokens(content);
 
             if (tokens > threshold) {
-                log.info("[AI Summary] Pre-summarizing {} ({} tokens > {}): {}",
-                    type, tokens, threshold, truncate(title, 60));
-                String summary = callPreSummarize(title, content, type);
-                if (summary != null && !summary.isEmpty()) {
-                    item.put("_pre_summary", summary);
+                if (callCount < maxCalls) {
+                    log.info("[AI Summary] Pre-summarizing {}/{} {} ({} tokens): {}",
+                        callCount + 1, maxCalls, type, tokens, truncate(title, 60));
+                    String summary = callPreSummarize(title, content, type);
+                    if (summary != null && !summary.isEmpty()) {
+                        item.put("_pre_summary", summary);
+                    }
+                    callCount++;
+                } else {
+                    // Fallback: truncate to 500 chars
+                    item.put("_pre_summary", truncate(content, 500));
+                    log.info("[AI Summary] Truncating {} ({} tokens, pre-summary limit reached): {}",
+                        type, tokens, truncate(title, 60));
                 }
             }
         }
     }
 
     private String callPreSummarize(String title, String content, String type) {
+        // Limit pre-summary input to avoid Ollama overload
+        String truncatedContent = truncate(content, 2000);
         String prompt;
         if ("news".equals(type)) {
             prompt = "\u8bf7\u4e3a\u4ee5\u4e0b\u65b0\u95fb\u751f\u6210150\u5b57\u4ee5\u5185\u7684\u6838\u5fc3\u6458\u8981\uff0c\u4fdd\u7559\u5173\u952e\u4fe1\u606f\uff08\u65f6\u95f4\u3001\u5730\u70b9\u3001\u4eba\u7269\u3001\u4e8b\u4ef6\u3001\u5f71\u54cd\uff09\uff1a\u6807\u9898\uff1a"
-                + title + " \u6b63\u6587\uff1a" + content;
+                + title + " \u6b63\u6587\uff1a" + truncatedContent;
         } else {
             prompt = "\u8bf7\u4e3a\u4ee5\u4e0b\u5e16\u5b50\u751f\u6210100\u5b57\u4ee5\u5185\u7684\u6838\u5fc3\u6458\u8981\uff0c\u4fdd\u7559\u5173\u952e\u4fe1\u606f\uff08\u8bdd\u9898\u3001\u4f5c\u8005\u89c2\u70b9\u3001\u5173\u952e\u7ec6\u8282\uff09\uff1a\u6807\u9898\uff1a"
-                + title + " \u6b63\u6587\uff1a" + content;
+                + title + " \u6b63\u6587\uff1a" + truncatedContent;
         }
 
         try {
