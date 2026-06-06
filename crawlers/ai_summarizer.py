@@ -37,11 +37,12 @@ os.environ["no_proxy"] = "*"
 os.environ["NO_PROXY"] = "*"
 
 # 预处理限制
-MAX_NEWS = 50          # 最多取多少条新闻
-MAX_POSTS = 100        # 最多取多少条帖子
-MAX_CONTENT_LEN = 200  # 新闻内容截取前 N 字
+MAX_NEWS = 25          # 最多取多少条新闻（给帖子/评论留空间）
+MAX_POSTS = 80         # 最多取多少条帖子（按点赞排序，热门优先）
+MAX_CONTENT_LEN = 150  # 新闻内容截取前 N 字（精简）
+MAX_COMMENTS = 30      # 最多取多少条评论（按点赞排序，热门优先）
 ESTIMATED_TOKEN_PER_CHAR = 1.5  # 中文约 1.5 token/字符（粗估）
-MAX_INPUT_TOKENS = 20000        # 上下文 token 上限
+MAX_INPUT_TOKENS = 28000        # 上下文 token 上限（模型32k，留4k缓冲）
 
 
 def get_db():
@@ -98,12 +99,50 @@ def fetch_social_posts(since):
         cur.execute(
             "SELECT title, author, site_name, like_count, comment_count, "
             "content, trigger_keyword "
-            "FROM social_post WHERE crawl_time > %s ORDER BY crawl_time DESC",
+            "FROM social_post WHERE crawl_time > %s ORDER BY like_count DESC",
             (since,),
         )
         rows = cur.fetchall()
         cur.close()
         return rows
+    finally:
+        conn.close()
+
+
+def fetch_social_comments(since):
+    """取 since 之后的社交评论，关联帖子信息"""
+    conn = get_db()
+    try:
+        cur = conn.cursor(pymysql.cursors.DictCursor)
+        cur.execute(
+            "SELECT sc.post_id, sc.commenter, sc.comment_content, sc.like_count as comment_likes, "
+            "sc.comment_time, sp.title as post_title, sp.author as post_author, sp.site_name "
+            "FROM social_comment sc "
+            "JOIN social_post sp ON sc.post_id = sp.post_id "
+            "WHERE sc.crawl_time > %s "
+            "ORDER BY sc.like_count DESC, sc.crawl_time DESC",
+            (since,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    finally:
+        conn.close()
+
+
+def fetch_previous_summary():
+    """获取上一次简报的核心信息，用于对比舆情变化"""
+    conn = get_db()
+    try:
+        cur = conn.cursor(pymysql.cursors.DictCursor)
+        cur.execute(
+            "SELECT title, risk_level, content, news_count, social_count, "
+            "DATE_FORMAT(create_time, '%m-%d %H:%M') as create_time "
+            "FROM ai_summary ORDER BY id DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row
     finally:
         conn.close()
 
@@ -145,7 +184,8 @@ def preprocess_news(news_list):
 def preprocess_posts(post_list):
     """
     预处理社交帖子：
-    - 取 title + author + like_count + comment_count
+    - 取 title + author + like_count + comment_count + content摘要
+    - 互动数据越丰富的帖子越靠前
     - 限制数量
     """
     if len(post_list) > MAX_POSTS:
@@ -159,58 +199,134 @@ def preprocess_posts(post_list):
         likes = p.get("like_count", 0) or 0
         comments = p.get("comment_count", 0) or 0
         keyword = p.get("trigger_keyword", "") or ""
-        items.append(
-            f"[{site}] @{author}: {title} "
-            f"({likes}赞, {comments}评论, 关键词:{keyword})"
-        )
+        content = (p.get("content", "") or "")[:150]
+        engagement = f"{likes}赞 {comments}评"
+        parts = [f"[{site}] @{author}: {title}"]
+        parts.append(f"  互动: {engagement} | 关键词: {keyword}")
+        if content and content != title:
+            parts.append(f"  内容: {content}")
+        items.append("\n".join(parts))
     return items
 
 
-def build_data_section(news_items, post_items):
+def preprocess_comments(comment_list, max_comments=30):
     """
-    拼接数据段，如果超过 token 限制则截断。
-    返回 (data_text, actual_news_count, actual_post_count)
+    预处理社交评论：
+    - 按点赞数排序，取热门评论
+    - 每条评论关联原帖信息
+    - 控制数量避免占用过多上下文
+    """
+    if len(comment_list) > max_comments:
+        comment_list = comment_list[:max_comments]
+
+    items = []
+    for c in comment_list:
+        commenter = c.get("commenter", "") or ""
+        content = (c.get("comment_content", "") or "")[:150]
+        likes = c.get("comment_likes", 0) or 0
+        post_title = (c.get("post_title", "") or "")[:60]
+        site = c.get("site_name", "") or ""
+        parts = [f"[{site}] {commenter} (👍{likes})"]
+        parts.append(f"  评论: {content}")
+        parts.append(f"  原帖: {post_title}")
+        items.append("\n".join(parts))
+    return items
+
+
+def build_data_section(news_items, post_items, comment_items, prev_summary):
+    """
+    拼接数据段，按比例分配 token 预算：
+    - 新闻 40%，帖子 35%，评论 15%，前次摘要 10%
+    返回 (data_text, actual_news_count, actual_post_count, actual_comment_count)
     """
     sections = []
     total_tokens = 0
 
-    # 新闻段
-    if news_items:
-        sections.append("=== 新闻文章 ===")
-        for item in news_items:
-            entry = f"{item}"
-            t = estimate_tokens(entry)
-            if total_tokens + t > MAX_INPUT_TOKENS:
-                break
-            sections.append(entry)
-            total_tokens += t
+    # token 预算分配
+    news_budget = int(MAX_INPUT_TOKENS * 0.40)
+    post_budget = int(MAX_INPUT_TOKENS * 0.35)
+    comment_budget = int(MAX_INPUT_TOKENS * 0.15)
+    prev_budget = int(MAX_INPUT_TOKENS * 0.10)
 
-    # 帖子段
-    if post_items:
-        sections.append("\n=== 社交帖子 ===")
-        for item in post_items:
-            t = estimate_tokens(item)
-            if total_tokens + t > MAX_INPUT_TOKENS:
-                break
-            sections.append(item)
-            total_tokens += t
-
-    # 统计实际放入的条数
     actual_news = 0
     actual_posts = 0
-    in_posts = False
-    for line in sections:
-        if line == "=== 社交帖子 ===":
-            in_posts = True
-            continue
-        if line.startswith("==="):
-            continue
-        if in_posts:
-            actual_posts += 1
-        else:
-            actual_news += 1
+    actual_comments = 0
 
-    return "\n".join(sections), actual_news, actual_posts
+    # 新闻段（占 40% 预算）
+    if news_items:
+        sections.append("=== 新闻文章 ===")
+        news_tokens = 0
+        for item in news_items:
+            t = estimate_tokens(item)
+            if news_tokens + t > news_budget:
+                break
+            sections.append(item)
+            news_tokens += t
+            actual_news += 1
+        total_tokens += news_tokens
+
+    # 帖子段（占 35% 预算）
+    if post_items:
+        sections.append("\n=== 社交帖子 ===")
+        post_tokens = 0
+        for item in post_items:
+            t = estimate_tokens(item)
+            if post_tokens + t > post_budget:
+                break
+            sections.append(item)
+            post_tokens += t
+            actual_posts += 1
+        total_tokens += post_tokens
+
+    # 评论段（占 15% 预算）
+    if comment_items:
+        sections.append("\n=== 热门评论 ===")
+        comment_tokens = 0
+        for item in comment_items:
+            t = estimate_tokens(item)
+            if comment_tokens + t > comment_budget:
+                break
+            sections.append(item)
+            comment_tokens += t
+            actual_comments += 1
+        total_tokens += comment_tokens
+
+    # 前次摘要段（占 10% 预算）
+    if prev_summary:
+        prev_title = prev_summary.get("title", "") or ""
+        prev_risk = prev_summary.get("risk_level", "") or ""
+        prev_time = prev_summary.get("create_time", "") or ""
+        prev_news = prev_summary.get("news_count", 0) or 0
+        prev_social = prev_summary.get("social_count", 0) or 0
+        prev_content = prev_summary.get("content", "") or ""
+        # 提取前次摘要的核心摘要部分
+        prev_summary_text = ""
+        lines = prev_content.split("\\n")
+        in_summary = False
+        for line in lines:
+            if "## 2" in line or "核心摘要" in line:
+                in_summary = True
+                continue
+            if in_summary and (line.startswith("## 3") or line.startswith("## ")):
+                break
+            if in_summary:
+                prev_summary_text += line + "\\n"
+        if not prev_summary_text.strip():
+            prev_summary_text = prev_content[:500]
+
+        prev_section = (
+            f"\n=== 上次简报 (时间: {prev_time}) ===\n"
+            f"标题: {prev_title}\n"
+            f"风险等级: {prev_risk}\n"
+            f"数据量: {prev_news}条新闻 + {prev_social}条社交\n"
+            f"核心摘要: {prev_summary_text.strip()[:500]}"
+        )
+        t = estimate_tokens(prev_section)
+        if t <= prev_budget:
+            sections.append(prev_section)
+            total_tokens += t
+
+    return "\n".join(sections), actual_news, actual_posts, actual_comments
 
 
 # ============================================================
@@ -221,8 +337,8 @@ SYSTEM_PROMPT = """你是一个专业的舆情分析师，服务于一个舆情�
 
 USER_PROMPT_TEMPLATE = """请根据以下过去 {hours} 小时内抓取的舆情数据，生成一份专业的舆情监测简报。
 
-数据概览：{news_count} 条新闻，{social_count} 条社交帖子。
-
+数据概览：{news_count} 条新闻，{social_count} 条社交帖子，{comment_count} 条热门评论。
+{prev_section}
 数据内容：
 {data_section}
 
@@ -240,12 +356,18 @@ USER_PROMPT_TEMPLATE = """请根据以下过去 {hours} 小时内抓取的舆情
 - 事件1（来源）
 - 事件2（来源）
 
-## 4. 风险评级
+## 4. 热门互动分析
+分析本时段内点赞/评论互动最高的帖子和评论，总结舆论焦点
+
+## 5. 舆情变化对比
+与上一次简报对比，分析风险趋势变化（升高/持平/下降），新增的重要议题
+
+## 6. 风险评级
 **评级：低/中/高**
 
 说明理由
 
-## 5. 关注建议
+## 7. 关注建议
 下一步需要重点关注的方向（3-5 条）
 
 请用中文输出。"""
@@ -327,7 +449,7 @@ def extract_title_and_risk(content):
                     break
 
         # 提取风险评级
-        if "评级" in line or "风险" in line:
+        if ("评级" in line or "风险" in line) and line.startswith("#"):
             line_upper = line.upper()
             if "高" in line_upper or "HIGH" in line_upper:
                 risk_level = "高"
@@ -412,7 +534,9 @@ def generate_summary(hours=1, dry_run=False):
     # 拉取数据
     news_raw = fetch_news(data_start)
     posts_raw = fetch_social_posts(data_start)
-    print(f"[ai_summarizer] 新闻: {len(news_raw)} 条, 帖子: {len(posts_raw)} 条")
+    comments_raw = fetch_social_comments(data_start)
+    prev_summary = fetch_previous_summary()
+    print(f"[ai_summarizer] 新闻: {len(news_raw)} 条, 帖子: {len(posts_raw)} 条, 评论: {len(comments_raw)} 条")
 
     if not news_raw and not posts_raw:
         print("[ai_summarizer] ⚠️ 无新数据，跳过生成")
@@ -421,20 +545,31 @@ def generate_summary(hours=1, dry_run=False):
     # 预处理
     news_items = preprocess_news(news_raw)
     post_items = preprocess_posts(posts_raw)
-    data_section, actual_news, actual_posts = build_data_section(
-        news_items, post_items
+    comment_items = preprocess_comments(comments_raw)
+    data_section, actual_news, actual_posts, actual_comments = build_data_section(
+        news_items, post_items, comment_items, prev_summary
     )
     print(
         f"[ai_summarizer] 预处理后: {actual_news} 条新闻, "
-        f"{actual_posts} 条帖子, "
+        f"{actual_posts} 条帖子, {actual_comments} 条评论, "
         f"预估 tokens: {estimate_tokens(data_section)}"
     )
+
+    # 构建前次摘要提示
+    prev_section = ""
+    if prev_summary:
+        prev_title = prev_summary.get("title", "") or ""
+        prev_risk = prev_summary.get("risk_level", "") or ""
+        prev_time = prev_summary.get("create_time", "") or ""
+        prev_section = f"\n上次简报 ({prev_time}): {prev_title} [风险: {prev_risk}]"
 
     # 构建 prompt
     prompt = USER_PROMPT_TEMPLATE.format(
         hours=hours,
         news_count=actual_news,
         social_count=actual_posts,
+        comment_count=actual_comments,
+        prev_section=prev_section,
         data_section=data_section,
     )
 
