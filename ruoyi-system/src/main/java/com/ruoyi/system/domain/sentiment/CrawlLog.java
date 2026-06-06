@@ -13,6 +13,8 @@ public class CrawlLog extends BaseEntity {
     private Date endTime;
     private Integer itemsFound;
     private Integer itemsSaved;
+    private Integer itemsNew;
+    private Integer itemsUpdated;
     private String errorMsg;
     private Long configId;
 
@@ -24,6 +26,8 @@ public class CrawlLog extends BaseEntity {
     public Date getEndTime() { return endTime; } public void setEndTime(Date endTime) { this.endTime = endTime; }
     public Integer getItemsFound() { return itemsFound; } public void setItemsFound(Integer itemsFound) { this.itemsFound = itemsFound; }
     public Integer getItemsSaved() { return itemsSaved; } public void setItemsSaved(Integer itemsSaved) { this.itemsSaved = itemsSaved; }
+    public Integer getItemsNew() { return itemsNew; } public void setItemsNew(Integer itemsNew) { this.itemsNew = itemsNew; }
+    public Integer getItemsUpdated() { return itemsUpdated; } public void setItemsUpdated(Integer itemsUpdated) { this.itemsUpdated = itemsUpdated; }
     public String getErrorMsg() { return errorMsg; } public void setErrorMsg(String errorMsg) { this.errorMsg = errorMsg; }
     public Long getConfigId() { return configId; } public void setConfigId(Long configId) { this.configId = configId; }
 }

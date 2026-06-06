@@ -7,6 +7,8 @@ import pymysql
 from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
+from proxy_config import PROXIES, get_playwright_proxy
+from common_db import save_news_article, update_crawl_log_start, update_crawl_log, update_crawl_log_error, update_config_last_crawl
 
 IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
 
@@ -21,7 +23,7 @@ def download_image(url, article_id, idx=0):
         return filename
     try:
         try:
-            resp = req_lib.get(url, proxies={"http": PROXY, "https": PROXY}, timeout=30)
+            resp = req_lib.get(url, proxies=PROXIES, timeout=30)
         except Exception:
             resp = req_lib.get(url, timeout=30)
         resp.raise_for_status()
@@ -33,7 +35,7 @@ def download_image(url, article_id, idx=0):
         print(f"    [IMG] 下载失败: {e}")
         return ""
 
-PROXY = "http://192.168.0.14:7890/"
+
 
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "Amnesty"
@@ -48,35 +50,6 @@ SUB_KEYWORDS = ["trade", "technology", "military", "sanctions", "indo-pacific", 
 
 def get_db(): return pymysql.connect(**DB_CONFIG)
 def clean(text): return re.sub(r"\s+", " ", text).strip() if text else ""
-
-def update_log_start(log_id):
-    if not log_id: return
-    conn = get_db(); cur = conn.cursor()
-    try: cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,)); conn.commit()
-    finally: cur.close(); conn.close()
-
-def update_log_success(log_id, items_found, items_saved):
-    if not log_id: return
-    conn = get_db(); cur = conn.cursor()
-    try: cur.execute("UPDATE crawl_log SET status='success', end_time=NOW(), items_found=%s, items_saved=%s WHERE id=%s", (items_found, items_saved, log_id)); conn.commit()
-    finally: cur.close(); conn.close()
-
-def update_log_error(log_id, error_msg):
-    if not log_id: return
-    conn = get_db(); cur = conn.cursor()
-    try: cur.execute("UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s", (str(error_msg)[:2000], log_id)); conn.commit()
-    finally: cur.close(); conn.close()
-
-def update_config_last_crawl(config_id):
-    if not config_id: return
-    conn = get_db(); cur = conn.cursor()
-    try: cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,)); conn.commit()
-    finally: cur.close(); conn.close()
-
-def save_article(cursor, article):
-    sql = """INSERT INTO news_article (title, url, publish_date, keywords, cover_image, content, source)
-    VALUES (%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE title=VALUES(title), publish_date=VALUES(publish_date), content=VALUES(content), keywords=VALUES(keywords), cover_image=VALUES(cover_image)"""
-    cursor.execute(sql, (article["title"], article["url"], article["date"], article["keywords"], article.get("cover_image", ""), article["content"], article["source"]))
 
 def extract_keywords(text):
     t = text.lower()
@@ -124,15 +97,16 @@ def is_cookie_title(title):
 
 def crawl(max_pages, max_articles):
     items_found = 0
-    items_saved = 0
+    items_new = 0
+    items_updated = 0
     page_failures = 0
     visited_urls = set()
     conn = get_db()
     cur = conn.cursor()
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, proxy={"server": PROXY},
-                                        args=["--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch(headless=True, proxy=get_playwright_proxy(),
+                                        args=["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--disable-background-networking", "--no-sandbox"])
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
                 viewport={"width": 1400, "height": 900}, locale="en-US")
@@ -180,7 +154,7 @@ def crawl(max_pages, max_articles):
             print(f"\n总文章数：{len(news_list)}")
 
             for news in news_list:
-                if items_saved >= max_articles:
+                if items_new + items_updated >= max_articles:
                     break
                 try:
                     print(f"\n采集：{news['title']}")
@@ -219,9 +193,12 @@ def crawl(max_pages, max_articles):
                     article_data = {"title": title, "url": news["url"], "date": date,
                                     "content": content[:5000], "keywords": keywords,
                                     "cover_image": "sentiment/images/" + cover_image if cover_image else "", "source": SITE_NAME}
-                    save_article(cur, article_data)
+                    is_new, is_updated = save_news_article(cur, article_data)
                     conn.commit()
-                    items_saved += 1
+                    if is_new:
+                        items_new += 1
+                    if is_updated:
+                        items_updated += 1
                     print("已保存")
                     time.sleep(random.uniform(1, 2))
                 except Exception as e:
@@ -230,8 +207,8 @@ def crawl(max_pages, max_articles):
     finally:
         cur.close()
         conn.close()
-    print(f"\n=== Done. Total saved: {items_saved} articles ===")
-    return items_found, items_saved
+    print(f"\n=== Done. New: {items_new}, Updated: {items_updated} ===")
+    return items_found, items_new, items_updated
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Amnesty Spider")
@@ -244,13 +221,13 @@ def parse_args():
 def main():
     args = parse_args()
     max_articles = args.max if args.max is not None else DEFAULT_MAX_ARTICLES
-    update_log_start(args.log_id)
+    update_crawl_log_start(args.log_id)
     try:
-        items_found, items_saved = crawl(DEFAULT_MAX_PAGES, max_articles)
-        update_log_success(args.log_id, items_found, items_saved)
+        items_found, items_new, items_updated = crawl(DEFAULT_MAX_PAGES, max_articles)
+        update_crawl_log(args.log_id, items_found, items_new, items_updated)
         update_config_last_crawl(args.config_id)
     except Exception as e:
-        update_log_error(args.log_id, str(e))
+        update_crawl_log_error(args.log_id, str(e))
         raise
 
 if __name__ == "__main__":

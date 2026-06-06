@@ -19,4 +19,6 @@ public class CrawlLogServiceImpl implements ICrawlLogService {
     public long selectTotalCount() { return m.selectTotalCount(); }
     public long selectSuccessCount() { return m.selectSuccessCount(); }
     public long selectFailedCount() { return m.selectFailedCount(); }
+    public int selectRunningCountByConfigId(Long configId) { return m.selectRunningCountByConfigId(configId); }
+    public int selectTotalRunningCount() { return m.selectTotalRunningCount(); }
 }

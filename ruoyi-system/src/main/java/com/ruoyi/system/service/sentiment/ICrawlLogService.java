@@ -12,4 +12,8 @@ public interface ICrawlLogService {
     long selectTotalCount();
     long selectSuccessCount();
     long selectFailedCount();
+    /** 查询某 config_id 是否有 running 状态的日志（防止重复触发） */
+    int selectRunningCountByConfigId(Long configId);
+    /** 查询当前 running 状态的总数（限制并发） */
+    int selectTotalRunningCount();
 }

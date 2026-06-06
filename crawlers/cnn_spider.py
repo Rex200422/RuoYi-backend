@@ -5,9 +5,9 @@ import os, sys, re, time, random, argparse, requests
 from bs4 import BeautifulSoup
 import pymysql
 from content_utils import clean_content_html
+from proxy_config import PROXIES
+from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 
-PROXY = "http://192.168.0.14:7890/"
-PROXIES = {"http": PROXY, "https": PROXY}
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36", "Referer": "https://edition.cnn.com/"}
 DEFAULT_MAX_ARTICLES = 3
@@ -50,56 +50,6 @@ def is_boilerplate(text):
 
 
 
-def update_log_start(log_id):
-    """Update crawl_log start_time when crawl begins."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_log_success(log_id, items_found, items_saved):
-    """Update crawl_log on success."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET status='success', end_time=NOW(), items_found=%s, items_saved=%s WHERE id=%s",
-                    (items_found, items_saved, log_id))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_log_error(log_id, error_msg):
-    """Update crawl_log on error."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s",
-                    (str(error_msg)[:2000], log_id))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_config_last_crawl(config_id):
-    """Update crawl_config last_crawl_time."""
-    if not config_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def save_article(cursor, article):
-    sql = """INSERT INTO news_article (title,url,publish_date,keywords,content,source)
-    VALUES (%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE title=VALUES(title), publish_date=VALUES(publish_date), content=VALUES(content), keywords=VALUES(keywords)"""
-    cursor.execute(sql, (article["title"], article["url"], article["date"], article["keywords"], article["content"], article["source"]))
 
 def extract_keywords(text):
     t = text.lower()
@@ -166,12 +116,12 @@ def get_article_content(url):
 
 
 def crawl_cnn(max_articles, keyword=None):
-    """Core crawl logic. Returns (items_found, items_saved) counts."""
+    """Core crawl logic. Returns (items_found, items_new, items_updated) counts."""
     print(f"=== CNN 新闻爬虫 v2 (HTML格式) ===")
     if keyword:
         print(f"关键词: {keyword}")
     print(f"最大文章数: {max_articles}")
-    conn = get_db(); cursor = conn.cursor(); count = 0; items_found = 0
+    conn = get_db(); cursor = conn.cursor(); count = 0; items_found = 0; items_new = 0; items_updated = 0
     try:
         for feed_url in CNN_RSS_FEEDS:
             if count >= max_articles: break
@@ -203,7 +153,9 @@ def crawl_cnn(max_articles, keyword=None):
                     date_tag = item.find("pubDate")
                     if date_tag: pub_date = date_tag.text.strip()
                     article = {"title": title, "url": href, "date": pub_date, "keywords": keywords, "content": content, "source": "CNN"}
-                    save_article(cursor, article)
+                    is_new, is_updated = save_news_article(cursor, article)
+                    if is_new: items_new += 1
+                    if is_updated: items_updated += 1
                     conn.commit()
                     count += 1
                     print(f"  [OK] {count}/{max_articles}: {title[:50]}...")
@@ -214,7 +166,7 @@ def crawl_cnn(max_articles, keyword=None):
         print(f"\n=== 爬取完成，共 {count} 条新闻 ===")
     finally:
         cursor.close(); conn.close()
-    return items_found, count
+    return items_found, items_new, items_updated
 
 def parse_args():
     """Parse command-line arguments."""
@@ -237,16 +189,16 @@ def main():
     log_id = args.log_id
 
     # On start: update log start_time
-    update_log_start(log_id)
+    update_crawl_log_start(log_id)
 
     try:
-        items_found, items_saved = crawl_cnn(max_articles, keyword=args.keyword)
+        items_found, items_new, items_updated = crawl_cnn(max_articles, keyword=args.keyword)
         # On success: update log and config
-        update_log_success(log_id, items_found, items_saved)
+        update_crawl_log(log_id, items_found, items_new, items_updated)
         update_config_last_crawl(config_id)
     except Exception as e:
         # On error: update log with error
-        update_log_error(log_id, str(e))
+        update_crawl_log_error(log_id, str(e))
         raise
 
 if __name__ == "__main__":

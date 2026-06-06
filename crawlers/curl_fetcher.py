@@ -3,8 +3,7 @@ URL fetcher using curl (works reliably through proxy).
 """
 import subprocess
 import os
-
-PROXY = "http://192.168.0.14:7890/"
+from proxy_config import SINGLE_PROXY as PROXY
 
 def fetch_url(url, timeout=30):
     """

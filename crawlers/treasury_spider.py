@@ -16,14 +16,12 @@ from content_utils import clean_content_html
 import requests
 from bs4 import BeautifulSoup
 import pymysql
+from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 
 warnings.filterwarnings("ignore")
 
 # --------------- config ---------------
-PROXIES = {
-    "http": "http://192.168.0.14:7890/",
-    "https": "http://192.168.0.14:7890/",
-}
+from proxy_config import PROXIES, get_playwright_proxy
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
@@ -83,52 +81,6 @@ def matches_main_keywords(title, content):
     return any(kw in combined for kw in MAIN_KEYWORDS)
 
 
-def update_log_start(log_id):
-    """Update crawl_log start_time when crawl begins."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_log_success(log_id, items_found, items_saved):
-    """Update crawl_log on success."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET status='success', end_time=NOW(), items_found=%s, items_saved=%s WHERE id=%s",
-                    (items_found, items_saved, log_id))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_log_error(log_id, error_msg):
-    """Update crawl_log on error."""
-    if not log_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s",
-                    (str(error_msg)[:2000], log_id))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
-def update_config_last_crawl(config_id):
-    """Update crawl_config last_crawl_time."""
-    if not config_id:
-        return
-    conn = get_db(); cur = conn.cursor()
-    try:
-        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))
-        conn.commit()
-    finally:
-        cur.close(); conn.close()
-
 
 # --------------- extraction ---------------
 
@@ -164,7 +116,7 @@ def extract_og_description(soup, url=None):
         try:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True, proxy={"server": PROXY})
+                browser = pw.chromium.launch(headless=True, proxy=get_playwright_proxy(), args=["--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-sandbox"])
                 page = browser.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 page.wait_for_timeout(3000)
@@ -264,13 +216,15 @@ def extract_article_date(soup):
 # --------------- main crawl ---------------
 
 def crawl(max_pages, max_articles):
-    """Core crawl logic. Returns (items_found, items_saved) counts."""
+    """Core crawl logic. Returns (items_found, items_new, items_updated) counts."""
     print("=== U.S. Treasury Spider v3 ===")
     session = requests.Session()
     conn = get_db()
     cur = conn.cursor()
     count = 0
     items_found = 0
+    items_new = 0
+    items_updated = 0
     visited = set()
 
     try:
@@ -350,17 +304,10 @@ def crawl(max_pages, max_articles):
 
                     # Store
                     keywords_str = extract_kw(title + " " + content)
-                    cur.execute(
-                        """INSERT INTO news_article
-                           (title, url, publish_date, keywords, content, source)
-                           VALUES (%s, %s, %s, %s, %s, %s)
-                           ON DUPLICATE KEY UPDATE
-                             title=VALUES(title),
-                             content=VALUES(content),
-                             publish_date=VALUES(publish_date),
-                             keywords=VALUES(keywords)""",
-                        (title, href, date, keywords_str, content, "U.S. Treasury"),
-                    )
+                    article = {"title": title, "url": href, "date": date, "keywords": keywords_str, "content": content, "source": "U.S. Treasury"}
+                    is_new, is_updated = save_news_article(cur, article)
+                    if is_new: items_new += 1
+                    if is_updated: items_updated += 1
                     conn.commit()
                     count += 1
                     print(
@@ -379,7 +326,7 @@ def crawl(max_pages, max_articles):
         conn.close()
 
     print(f"\n=== Done. Total saved: {count} articles ===")
-    return items_found, count
+    return items_found, items_new, items_updated
 
 
 def parse_args():
@@ -405,16 +352,16 @@ def main():
     log_id = args.log_id
 
     # On start: update log start_time
-    update_log_start(log_id)
+    update_crawl_log_start(log_id)
 
     try:
-        items_found, items_saved = crawl(max_pages, max_articles)
+        items_found, items_new, items_updated = crawl(max_pages, max_articles)
         # On success: update log and config
-        update_log_success(log_id, items_found, items_saved)
+        update_crawl_log(log_id, items_found, items_new, items_updated)
         update_config_last_crawl(config_id)
     except Exception as e:
         # On error: update log with error
-        update_log_error(log_id, str(e))
+        update_crawl_log_error(log_id, str(e))
         raise
 
 if __name__ == "__main__":

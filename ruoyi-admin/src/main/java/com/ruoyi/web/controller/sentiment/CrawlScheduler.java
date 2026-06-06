@@ -3,6 +3,9 @@ package com.ruoyi.web.controller.sentiment;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,18 +19,26 @@ import com.ruoyi.system.service.sentiment.ICrawlLogService;
 
 /**
  * Scheduler that automatically triggers crawls based on crawl_config settings.
- * Runs every minute and checks for enabled configs that are due for crawling.
- * 
- * Before running: inserts a crawl_log entry with status='running'.
- * The Python script is responsible for updating the log entry when done.
- * After successful crawl: updates last_crawl_time in crawl_config.
+ * Runs every 60s. Key safety rules:
+ *   1. Skip if this config already has a running crawl (prevents duplicate triggers)
+ *   2. Max 3 concurrent crawls globally (Playwright is very heavy on CPU/memory)
+ *   3. last_crawl_time updated on START (not just on success) to prevent re-trigger
  */
 @Component
 public class CrawlScheduler {
     private static final Logger log = LoggerFactory.getLogger(CrawlScheduler.class);
 
+    /** Max concurrent crawls — 2-core HDD machine: 2 crawlers max (each Playwright spawns 10+ processes) */
+    private static final int MAX_CONCURRENT = 2;
+
     @Autowired private ICrawlConfigService crawlConfigService;
     @Autowired private ICrawlLogService crawlLogService;
+
+    /** Semaphore limits concurrent crawls */
+    private final Semaphore crawlSemaphore = new Semaphore(MAX_CONCURRENT, true);
+
+    /** Fixed thread pool — bounded to MAX_CONCURRENT threads */
+    private final ExecutorService crawlExecutor = Executors.newFixedThreadPool(MAX_CONCURRENT);
 
     /**
      * Check every minute for due crawl configs and trigger them.
@@ -45,17 +56,45 @@ public class CrawlScheduler {
         log.info("Found {} due crawl config(s) to run.", dueConfigs.size());
 
         for (CrawlConfig config : dueConfigs) {
-            // Run each crawl asynchronously using CompletableFuture
-            CompletableFuture.runAsync(() -> triggerCrawl(config));
+            // Safety check 1: skip if this config already has a running crawl
+            int runningForConfig = crawlLogService.selectRunningCountByConfigId(config.getId());
+            if (runningForConfig > 0) {
+                log.info("Skipping config id={} ({}) — already {} running crawl(s)",
+                         config.getId(), config.getSiteName(), runningForConfig);
+                continue;
+            }
+
+            // Safety check 2: skip if global concurrent limit reached
+            if (crawlSemaphore.availablePermits() <= 0) {
+                log.info("Skipping config id={} ({}) — max concurrent crawls ({}) reached",
+                         config.getId(), config.getSiteName(), MAX_CONCURRENT);
+                continue;
+            }
+
+            // Trigger crawl asynchronously on bounded thread pool
+            CompletableFuture.runAsync(() -> triggerCrawl(config), crawlExecutor);
         }
     }
 
     /**
      * Trigger a crawl for the given config.
-     * Creates a crawl_log entry and runs the Python script as a subprocess.
+     * Acquires a semaphore permit before running, releases on completion.
      */
     public void triggerCrawl(CrawlConfig config) {
-        log.info("Starting crawl for config id={}, site={}, keyword={}", 
+        // Acquire semaphore permit (blocks if all permits taken)
+        if (!crawlSemaphore.tryAcquire()) {
+            log.warn("Semaphore full, skipping config id={}", config.getId());
+            return;
+        }
+        try {
+            doCrawl(config);
+        } finally {
+            crawlSemaphore.release();
+        }
+    }
+
+    private void doCrawl(CrawlConfig config) {
+        log.info("Starting crawl for config id={}, site={}, keyword={}",
                  config.getId(), config.getSiteName(), config.getKeyword());
 
         // Insert crawl_log entry with status=running
@@ -66,6 +105,12 @@ public class CrawlScheduler {
         crawlLog.setStartTime(new Date());
         crawlLog.setConfigId(config.getId());
         crawlLogService.insert(crawlLog);
+
+        // Update last_crawl_time IMMEDIATELY to prevent re-trigger by next scheduler tick
+        CrawlConfig updateConfig = new CrawlConfig();
+        updateConfig.setId(config.getId());
+        updateConfig.setLastCrawlTime(new Date());
+        crawlConfigService.update(updateConfig);
 
         String scriptFile = getSiteScript(config.getSiteName());
         if (scriptFile == null) {
@@ -93,14 +138,10 @@ public class CrawlScheduler {
             pb.redirectErrorStream(true);
             Process process = pb.start();
             int exitCode = process.waitFor();
-            
+
             if (exitCode == 0) {
                 log.info("Crawl completed successfully for config id={}", config.getId());
-                // Update last_crawl_time in crawl_config
-                CrawlConfig updateConfig = new CrawlConfig();
-                updateConfig.setId(config.getId());
-                updateConfig.setLastCrawlTime(new Date());
-                crawlConfigService.update(updateConfig);
+                // Note: last_crawl_time already updated at start
             } else {
                 log.warn("Crawl script exited with code {} for config id={}", exitCode, config.getId());
                 CrawlLog failedLog = new CrawlLog();

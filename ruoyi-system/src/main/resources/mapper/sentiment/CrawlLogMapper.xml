@@ -10,11 +10,13 @@
         <result property="endTime" column="end_time"/>
         <result property="itemsFound" column="items_found"/>
         <result property="itemsSaved" column="items_saved"/>
+        <result property="itemsNew" column="items_new"/>
+        <result property="itemsUpdated" column="items_updated"/>
         <result property="errorMsg" column="error_msg"/>
         <result property="configId" column="config_id"/>
         <result property="createTime" column="create_time"/>
     </resultMap>
-    <sql id="cols">select id,site_name,keyword,status,start_time,end_time,items_found,items_saved,error_msg,config_id,create_time from crawl_log</sql>
+    <sql id="cols">select id,site_name,keyword,status,start_time,end_time,items_found,items_saved,items_new,items_updated,error_msg,config_id,create_time from crawl_log</sql>
     <select id="selectList" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog" resultMap="R">
         <include refid="cols"/><where>
             <if test="siteName!=null and siteName!=''">AND site_name=#{siteName}</if>
@@ -35,8 +37,8 @@
         </where>
     </select>
     <insert id="insert" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog" useGeneratedKeys="true" keyProperty="id">
-        insert into crawl_log(site_name,keyword,status,start_time,config_id,create_time)
-        values(#{siteName},#{keyword},#{status},#{startTime},#{configId},now())
+        insert into crawl_log(site_name,keyword,status,start_time,items_found,items_saved,items_new,items_updated,config_id,create_time)
+        values(#{siteName},#{keyword},#{status},#{startTime},0,0,0,0,#{configId},now())
     </insert>
     <update id="update" parameterType="com.ruoyi.system.domain.sentiment.CrawlLog">
         update crawl_log
@@ -45,6 +47,8 @@
             <if test="endTime!=null">end_time=#{endTime},</if>
             <if test="itemsFound!=null">items_found=#{itemsFound},</if>
             <if test="itemsSaved!=null">items_saved=#{itemsSaved},</if>
+            <if test="itemsNew!=null">items_new=#{itemsNew},</if>
+            <if test="itemsUpdated!=null">items_updated=#{itemsUpdated},</if>
             <if test="errorMsg!=null">error_msg=#{errorMsg},</if>
         </set>
         where id=#{id}
@@ -58,5 +62,11 @@
     </select>
     <select id="selectFailedCount" resultType="long">
         select count(*) from crawl_log where status='failed'
+    </select>
+    <select id="selectRunningCountByConfigId" resultType="int">
+        select count(*) from crawl_log where config_id=#{configId} and status='running'
+    </select>
+    <select id="selectTotalRunningCount" resultType="int">
+        select count(*) from crawl_log where status='running'
     </select>
 </mapper>
