@@ -102,9 +102,16 @@ public class AiSummaryGenerator {
                 return true;
             }
 
+            // ---- Build commentsByPost for pre-summarize and buildDataSection ----
+            Map<String, List<Map<String, Object>>> commentsByPost = new LinkedHashMap<>();
+            for (Map<String, Object> c : comments) {
+                String pid = str(c.get("post_id"));
+                commentsByPost.computeIfAbsent(pid, k -> new ArrayList<>()).add(c);
+            }
+
             // ---- Pre-summarize ALL long content via Ollama (qwen3.5 4b, fast) ----
-            preSummarizeLongContent(posts, "post");
-            preSummarizeLongContent(news, "news");
+            preSummarizeLongContent(posts, "post", commentsByPost);
+            preSummarizeLongContent(news, "news", commentsByPost);
 
             // ---- Build prompt ----
             String dataSection = buildDataSection(posts, comments, news);
@@ -319,9 +326,13 @@ public class AiSummaryGenerator {
      * No truncation fallback — every long item goes through the presumer.
      * Uses qwen3.5 4b for speed (~2s per call vs ~30s for 36B).
      */
-    private void preSummarizeLongContent(List<Map<String, Object>> items, String type) {
+    private void preSummarizeLongContent(List<Map<String, Object>> items, String type, Map<String, List<Map<String, Object>>> commentsByPost) {
         int processed = 0;
         int total = items.size();
+        // Build commentsByPost from parameter if not provided
+        if (commentsByPost == null) {
+            commentsByPost = new LinkedHashMap<>();
+        }
         for (Map<String, Object> item : items) {
             String title = str(item.get("title"));
             String content = str(item.get("content"));
@@ -334,12 +345,48 @@ public class AiSummaryGenerator {
                 continue; // Skip LLM call, use cached
             }
 
-            int tokens = estimateTokens(content);
+            // For posts: calculate token estimate including ALL fields (title, likes, comments, keyword, content, top10 comments)
+            int tokens;
+            if ("post".equals(type)) {
+                // Build full post block to get accurate token count
+                String pid = str(item.get("post_id"));
+                List<Map<String, Object>> postComments = commentsByPost.getOrDefault(pid, Collections.emptyList());
+                String fullBlock = buildPostBlock(item, postComments);
+                tokens = estimateTokens(fullBlock);
+            } else {
+                tokens = estimateTokens(content);
+            }
             if (tokens > PRE_SUMMARY_THRESHOLD) {
                 processed++;
                 log.info("[AI Summary] Pre-summarizing {}/{} {} ({} tokens): {}",
                     processed, total, type, tokens, truncate(title, 60));
-                String summary = callPreSummarize(title, content, type);
+                // Build full context for pre-summary (includes engagement + comments)
+                String fullContext;
+                if ("post".equals(type)) {
+                    StringBuilder ctx = new StringBuilder();
+                    ctx.append("标题: ").append(title);
+                    int likes = intVal(item.get("like_count"));
+                    int commentCount = intVal(item.get("comment_count"));
+                    String keyword = str(item.get("trigger_keyword"));
+                    ctx.append("\n互动: ").append(likes).append("赞 ").append(commentCount).append("评 | 关键词: ").append(keyword);
+                    ctx.append("\n正文: ").append(content);
+                    String postPid = str(item.get("post_id"));
+                    List<Map<String, Object>> postComments = commentsByPost.getOrDefault(postPid, Collections.emptyList());
+                    if (!postComments.isEmpty()) {
+                        ctx.append("\n热门评论:");
+                        int idx = 1;
+                        for (Map<String, Object> c : postComments) {
+                            ctx.append("\n  ").append(idx++).append(". ").append(str(c.get("commenter")))
+                              .append(" (").append(intVal(c.get("comment_likes"))).append("赞): ")
+                              .append(str(c.get("comment_content")));
+                            if (idx > 10) break;
+                        }
+                    }
+                    fullContext = ctx.toString();
+                } else {
+                    fullContext = "标题: " + title + "\n正文: " + content;
+                }
+                String summary = callPreSummarize(fullContext, type);
                 if (summary != null && !summary.isEmpty()) {
                     item.put("_pre_summary", summary);
                 }
@@ -347,7 +394,7 @@ public class AiSummaryGenerator {
                 if ("post".equals(type) && item.containsKey("comment_content")) {
                     String commentContent = str(item.get("comment_content"));
                     if (estimateTokens(commentContent) > PRE_SUMMARY_THRESHOLD) {
-                        String cs = callPreSummarize(str(item.get("post_title")), commentContent, "comment");
+                        String cs = callPreSummarize("标题: " + str(item.get("post_title")) + "\n评论内容: " + commentContent, "comment");
                         if (cs != null && !cs.isEmpty()) {
                             item.put("_pre_comment_summary", cs);
                         }
@@ -360,14 +407,12 @@ public class AiSummaryGenerator {
         }
     }
 
-    private String callPreSummarize(String title, String content, String type) {
+    private String callPreSummarize(String fullContext, String type) {
         String prompt;
-        if ("comment".equals(type)) {
-            prompt = "请为以下评论内容生成50字以内的核心摘要，保留关键观点：\n标题：" + title + "\n内容：" + content;
-        } else if ("news".equals(type)) {
-            prompt = "请为以下新闻生成150字以内的核心摘要，保留关键信息（时间、地点、人物、事件、影响）：\n标题：" + title + "\n正文：" + content;
+        if ("news".equals(type)) {
+            prompt = "请为以下新闻生成150字以内的核心摘要，保留关键信息（时间、地点、人物、事件、影响）：\n" + fullContext;
         } else {
-            prompt = "请为以下帖子生成100字以内的核心摘要，保留关键信息（话题、作者观点、关键细节）：\n标题：" + title + "\n正文：" + content;
+            prompt = "请为以下帖子生成100字以内的核心摘要，保留关键信息（话题、作者观点、互动热度、评论焦点、关键细节）：\n" + fullContext;
         }
 
         try {
