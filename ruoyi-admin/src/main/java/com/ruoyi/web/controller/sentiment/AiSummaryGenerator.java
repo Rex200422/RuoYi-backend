@@ -31,7 +31,7 @@ public class AiSummaryGenerator {
     private static final String MODEL_NAME = "qwen3.6:latest";
 
     // 预处理限制
-    private static final int MAX_NEWS = 25;
+    private static final int MAX_NEWS = 50;
     private static final int MAX_POSTS = 80;
     private static final int MAX_COMMENTS = 30;
     private static final int MAX_CONTENT_LEN = 150;
@@ -54,7 +54,7 @@ public class AiSummaryGenerator {
      * @return true 成功, false 失败
      */
     public boolean generate(int hours) {
-        log.info("[AI Summary] === 开始生成简报 (时间窗口: {}h) ===", hours);
+        log.info("[AI Summary] === 开始生成简报 ===");
 
         // 1. 检查 Ollama
         if (!checkOllama()) {
@@ -64,30 +64,18 @@ public class AiSummaryGenerator {
 
         // 2. 时间范围
         LocalDateTime now = LocalDateTime.now();
-        LocalDateTime dataStart = now.minusHours(hours);
         LocalDateTime dataEnd = now;
 
-        // 3. 拉取数据
-        List<Map<String, Object>> news = fetchNews(dataStart);
-        List<Map<String, Object>> posts = fetchPosts(dataStart);
-        List<Map<String, Object>> comments = fetchComments(dataStart);
+        // 3. 拉取最近数据(不限时间)
+        List<Map<String, Object>> news = fetchNews();
+        List<Map<String, Object>> posts = fetchPosts();
+        List<Map<String, Object>> comments = fetchComments();
         Map<String, Object> prevSummary = fetchPreviousSummary();
         log.info("[AI Summary] 新闻: {} 条, 帖子: {} 条, 评论: {} 条", news.size(), posts.size(), comments.size());
 
         if (news.isEmpty() && posts.isEmpty()) {
-            // 尝试扩大时间窗口到12小时
-            LocalDateTime fallback = now.minusHours(24);
-            if (dataStart.isAfter(fallback)) {
-                log.info("[AI Summary] {}h内无数据，扩大到12小时", hours);
-                dataStart = fallback;
-                news = fetchNews(dataStart);
-                posts = fetchPosts(dataStart);
-                comments = fetchComments(dataStart);
-                log.info("[AI Summary] 扩大后: 新闻 {} 条, 帖子 {} 条, 评论 {} 条", news.size(), posts.size(), comments.size());
-            }
-            if (news.isEmpty() && posts.isEmpty()) {
-                log.warn("[AI Summary] 24h内仍无数据，跳过");
-                return false;
+            log.warn("[AI Summary] 无新数据，跳过");
+            return false;
             }
         }
 
@@ -118,36 +106,33 @@ public class AiSummaryGenerator {
         log.info("[AI Summary] 风险等级: {}", riskLevel);
 
         // 7. 存入数据库
-        saveSummary(title, content, riskLevel, dataStart, dataEnd, newsCount, postCount, genSeconds);
+        saveSummary(title, content, riskLevel, dataEnd, dataEnd, newsCount, postCount, genSeconds);
         log.info("[AI Summary] === 完成 ===");
         return true;
     }
 
     // ==================== 数据获取 ====================
 
-    private List<Map<String, Object>> fetchNews(LocalDateTime since) {
+    private List<Map<String, Object>> fetchNews() {
         return jdbc.queryForList(
             "SELECT title, source, keywords, content, publish_date " +
-            "FROM news_article WHERE crawl_time > ? ORDER BY crawl_time DESC LIMIT ?",
-            java.sql.Timestamp.valueOf(since), MAX_NEWS
+            "FROM news_article ORDER BY crawl_time DESC LIMIT ?", MAX_NEWS
         );
     }
 
-    private List<Map<String, Object>> fetchPosts(LocalDateTime since) {
+    private List<Map<String, Object>> fetchPosts() {
         return jdbc.queryForList(
             "SELECT title, author, site_name, like_count, comment_count, content, trigger_keyword " +
-            "FROM social_post WHERE crawl_time > ? ORDER BY like_count DESC LIMIT ?",
-            java.sql.Timestamp.valueOf(since), MAX_POSTS
+            "FROM social_post ORDER BY crawl_time DESC LIMIT ?", MAX_POSTS
         );
     }
 
-    private List<Map<String, Object>> fetchComments(LocalDateTime since) {
+    private List<Map<String, Object>> fetchComments() {
         return jdbc.queryForList(
             "SELECT sc.commenter, sc.comment_content, sc.like_count AS comment_likes, " +
             "sc.comment_time, sp.title AS post_title, sp.author AS post_author, sp.site_name " +
             "FROM social_comment sc JOIN social_post sp ON sc.post_id = sp.post_id " +
-            "WHERE sc.crawl_time > ? ORDER BY sc.like_count DESC, sc.crawl_time DESC LIMIT ?",
-            java.sql.Timestamp.valueOf(since), MAX_COMMENTS
+            "ORDER BY sc.like_count DESC, sc.crawl_time DESC LIMIT ?", MAX_COMMENTS
         );
     }
 

@@ -40,8 +40,13 @@ def save_comment(cur, c):
     ON DUPLICATE KEY UPDATE like_count=VALUES(like_count), comment_content=VALUES(comment_content)"""
     cur.execute(sql, (c["post_id"],c["title"],c["comment_id"],c["commenter"],c["comment_content"],c["like_count"],c["comment_time"]))
 
+def update_engagement(cur, post_id, like_count, comment_count):
+    # 更新已有帖子的互动数据(点赞数、评论数)，不更新标题和内容
+    sql = "UPDATE social_post SET like_count=%s, comment_count=%s WHERE post_id=%s AND site_name='Bluesky'"
+    cur.execute(sql, (like_count, comment_count, post_id))
+
 def get_image_urls(record, did=None):
-    """从帖子记录中提取图片URL列表（含图片、外链缩略图）"""
+    # 从帖子记录中提取图片URL列表（含图片、外链缩略图）
     images = []
     if not (hasattr(record, 'embed') and record.embed):
         return images
@@ -66,7 +71,7 @@ def get_image_urls(record, did=None):
     return images
 
 def download_image(url, post_id, idx):
-    """下载图片到本地，返回本地文件名"""
+    # 下载图片到本地，返回本地文件名
     post_id_hash = hashlib.md5(post_id.encode()).hexdigest()[:16]
     filename = f"{post_id_hash}_{idx}.jpg"
     local_path = os.path.join(IMAGE_DIR, filename)
@@ -84,7 +89,7 @@ def download_image(url, post_id, idx):
         return None
 
 def save_images(cur, conn, post_id, image_urls):
-    """保存图片记录到 social_post_image 表，并下载到本地"""
+    # 保存图片记录到 social_post_image 表，并下载到本地
     # 先检查是否已有图片记录
     cur.execute("SELECT COUNT(*) FROM social_post_image WHERE post_id=%s", (post_id,))
     if cur.fetchone()[0] > 0:
@@ -170,14 +175,25 @@ def crawl(keywords, max_per_kw):
                 title = (post.record.text or "")[:100]
                 if hasattr(post.record,'reply') and post.record.reply: uri = post.record.reply.root.uri
                 cur.execute("SELECT 1 FROM social_post WHERE post_id=%s",(uri,))
-                if cur.fetchone(): continue
+                exists = cur.fetchone()
                 try:
                     th = client.app.bsky.feed.get_post_thread({"uri":uri,"depth":DEPTH})
-                    parse_result = parse_thread(th.thread, uri, title, "", kw, display_kw, conn, cur)
-                    if parse_result:
-                        is_new, is_updated = parse_result
-                        if is_new: items_new += 1
-                        if is_updated: items_updated += 1
+                    if exists:
+                        # 已有帖子：只更新互动数据(点赞/评论数)，同时更新评论详情
+                        post_obj = th.thread.post if th.thread else None
+                        if post_obj:
+                            update_engagement(cur, uri, post_obj.like_count or 0, post_obj.reply_count or 0)
+                            parse_thread(th.thread, uri, title, "", kw, display_kw, conn, cur)
+                            conn.commit()
+                            items_updated += 1
+                            print(f"  [UPDATE] {(post_obj.record.text or '')[:60]} (like:{post_obj.like_count or 0} reply:{post_obj.reply_count or 0})")
+                    else:
+                        # 新帖子：完整保存
+                        parse_result = parse_thread(th.thread, uri, title, "", kw, display_kw, conn, cur)
+                        if parse_result:
+                            is_new, is_updated = parse_result
+                            if is_new: items_new += 1
+                            if is_updated: items_updated += 1
                     cnt += 1
                 except Exception as e: print(f"  [ERR] {e}")
                 time.sleep(1)
