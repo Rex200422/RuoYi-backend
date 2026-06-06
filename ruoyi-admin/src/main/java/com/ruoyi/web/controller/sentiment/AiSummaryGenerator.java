@@ -67,6 +67,11 @@ public class AiSummaryGenerator {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    // Shared HttpClient instance (reused across all calls to avoid resource exhaustion)
+    private final HttpClient httpClient = HttpClient.newBuilder()
+        .connectTimeout(java.time.Duration.ofSeconds(10))
+        .build();
+
     // ==================== Main Entry ====================
 
     public boolean generate(int hours) {
@@ -131,7 +136,7 @@ public class AiSummaryGenerator {
 
             // ---- Call Ollama (generation model: qwen3.6 27B, 45/64 layers GPU) ----
             long startMs = System.currentTimeMillis();
-            String content = callOllama(prompt, GENERATION_MODEL, 300);
+            String content = callOllama(prompt, GENERATION_MODEL, 600);
             if (content == null) {
                 log.warn("[AI Summary] Ollama call failed");
                 return false;
@@ -434,7 +439,6 @@ public class AiSummaryGenerator {
             body.put("stream", false);
             String json = mapper.writeValueAsString(body);
 
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(OLLAMA_BASE + "/api/chat"))
                 .timeout(java.time.Duration.ofSeconds(120))
@@ -442,7 +446,7 @@ public class AiSummaryGenerator {
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
 
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) {
                 JsonNode node = mapper.readTree(resp.body());
                 return node.path("message").path("content").asText("");
@@ -637,12 +641,11 @@ public class AiSummaryGenerator {
 
     private boolean checkOllama() {
         try {
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(OLLAMA_BASE + "/api/tags"))
                 .timeout(java.time.Duration.ofSeconds(10))
                 .GET().build();
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             return resp.statusCode() == 200;
         } catch (Exception e) {
             log.warn("[AI Summary] Ollama connection failed: {}", e.getMessage());
@@ -667,7 +670,6 @@ public class AiSummaryGenerator {
             body.put("stream", false);
             String json = mapper.writeValueAsString(body);
 
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(OLLAMA_BASE + "/api/chat"))
                 .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
@@ -675,7 +677,7 @@ public class AiSummaryGenerator {
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
 
-            HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) {
                 JsonNode node = mapper.readTree(resp.body());
                 return node.path("message").path("content").asText("");
@@ -786,10 +788,27 @@ public class AiSummaryGenerator {
         return ids;
     }
 
+    /**
+     * Estimate total tokens for a list of items WITHOUT comments (not yet fetched).
+     * Includes: [site] @author: title \n 互动: X赞 Y评 | 关键词: Z \n 内容: content
+     * Used only for deciding whether to fetch more data layers (conservative lower bound).
+     * Actual token usage will be higher once comments are attached in buildDataSection.
+     */
     private int estimateListTokens(List<Map<String, Object>> items) {
         int total = 0;
         for (Map<String, Object> item : items) {
-            total += estimateTokens(str(item.get("content")));
+            // Match buildPostBlock format: [site] @author: title\n互动: X赞 Y评 | 关键词: Z\n内容: content
+            String site = str(item.get("site_name"));
+            String author = str(item.get("author"));
+            String title = str(item.get("title"));
+            String content = str(item.get("content"));
+            String keyword = str(item.get("trigger_keyword"));
+            int likes = intVal(item.get("like_count"));
+            int comments = intVal(item.get("comment_count"));
+            String block = "[" + site + "] @" + author + ": " + title + "\n"
+                + "互动: " + likes + "赞 " + comments + "评 | 关键词: " + keyword + "\n"
+                + "内容: " + content;
+            total += estimateTokens(block);
         }
         return total;
     }
