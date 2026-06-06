@@ -14,6 +14,7 @@ import com.ruoyi.system.service.sentiment.IAiSummaryService;
 public class AiSummaryController extends BaseController {
 
     @Autowired private IAiSummaryService svc;
+    @Autowired private AiSummaryGenerator generator;
 
     /**
      * 查询AI简报分页列表
@@ -60,4 +61,18 @@ public class AiSummaryController extends BaseController {
     public AjaxResult remove(@PathVariable Long[] ids) {
         return toAjax(svc.deleteByIds(ids));
     }
+
+    /**
+     * 手动触发AI简报生成（测试用）
+     */
+    @GetMapping("/test-generate")
+    public AjaxResult testGenerate() {
+        try {
+            generator.generate(1);
+            return success("简报生成完成");
+        } catch (Exception e) {
+            return AjaxResult.error("生成失败: " + e.getMessage());
+        }
+    }
+
 }
