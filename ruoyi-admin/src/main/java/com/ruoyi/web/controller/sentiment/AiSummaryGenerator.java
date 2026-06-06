@@ -75,6 +75,7 @@ public class AiSummaryGenerator {
         }
 
         LocalDateTime now = LocalDateTime.now();
+        try {
 
         // ---- Layered data fetch ----
         List<Map<String, Object>> posts = fetchPostsLayered(now);
@@ -135,6 +136,13 @@ public class AiSummaryGenerator {
         saveSummary(title, content, riskLevel, now, newsCount, postCount, genSeconds);
         log.info("[AI Summary] === Done ===");
         return true;
+        } catch (Exception e) {
+            log.error("[AI Summary] Generation failed with exception: {}", e.getMessage());
+            try {
+                saveSkippedSummary(now, 0, 0);
+            } catch (Exception ignored) {}
+            return false;
+        }
     }
 
     // ==================== Data Fetching ====================
