@@ -20,19 +20,22 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * AI Summary Generator - V2
- * Layered data fetch + pre-summarization + structured prompt for Ollama.
+ * AI Summary Generator - V3
+ * Layered data fetch (1h->6h->24h for posts, 12h->24h for news)
+ * + dual-model pre-summarization (qwen3.5 4b) + generation (qwen3.6 36B)
+ * + Thinking Preservation via previous summary in context.
  */
 @Service
 public class AiSummaryGenerator {
     private static final Logger log = LoggerFactory.getLogger(AiSummaryGenerator.class);
 
     private static final String OLLAMA_BASE = "http://200m.frpee.com:18138";
-    private static final String MODEL_NAME = "qwen3.6:latest";
+    private static final String GENERATION_MODEL = "qwen3.6:latest";
+    private static final String PRESUMMARY_MODEL = "qwen3.5:4b-q4_K_M";
 
     // Token estimation: Chinese ~1.5 tokens/char
     private static final double TOKEN_PER_CHAR = 1.5;
-    private static final int MAX_INPUT_TOKENS = 28000;
+    private static final int MAX_INPUT_TOKENS = 32000;
 
     // Safe budget: 90% of max input
     private static final int SAFE_TOKENS = (int) (MAX_INPUT_TOKENS * 0.9); // 28800
@@ -42,31 +45,28 @@ public class AiSummaryGenerator {
     private static final int POST_BUDGET = (int) (SAFE_TOKENS * 0.50);   // 14400
     private static final int PREV_BUDGET = (int) (SAFE_TOKENS * 0.10);   // 2880
 
-    // Pre-summarization thresholds
-    private static final int NEWS_SUMMARY_THRESHOLD = 1500;
-    private static final int POST_SUMMARY_THRESHOLD = 800;
-    private static final int MAX_PRE_SUMMARIZE_CALLS = 10;  // Max Ollama pre-summary calls
+    // Pre-summarization: unified threshold for both news and posts
+    private static final int PRE_SUMMARY_THRESHOLD = 800;
 
     // Limits
-    private static final int MAX_POSTS = 100;
-    private static final int MAX_NEWS = 80;
+    private static final int MAX_POSTS = 200;
+    private static final int MAX_NEWS = 200;
     private static final int TOP_COMMENTS_PER_POST = 20;
 
-    // Time windows
+    // Time windows for layered fetch
     private static final int POST_FRESH_HOURS = 1;
+    private static final int POST_FALLBACK_HOURS_1 = 6;
+    private static final int POST_FALLBACK_HOURS_2 = 24;
     private static final int NEWS_FRESH_HOURS = 12;
+    private static final int NEWS_FALLBACK_HOURS = 24;
 
     @Autowired
     private JdbcTemplate jdbc;
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    /**
-     * Main entry point - generates a complete summary report.
-     * Public interface unchanged for AiSummaryScheduler compatibility.
-     * @param hours nominal reporting window (not strictly used for data fetch anymore)
-     * @return true on success, false on failure/skip
-     */
+    // ==================== Main Entry ====================
+
     public boolean generate(int hours) {
         log.info("[AI Summary] === Starting report generation ===");
 
@@ -77,66 +77,64 @@ public class AiSummaryGenerator {
 
         LocalDateTime now = LocalDateTime.now();
         try {
+            // ---- Layered data fetch ----
+            List<Map<String, Object>> posts = fetchPostsLayered(now);
+            List<Map<String, Object>> news = fetchNewsLayered(now);
+            log.info("[AI Summary] Posts: {}, News: {}", posts.size(), news.size());
 
-        // ---- Layered data fetch ----
-        List<Map<String, Object>> posts = fetchPostsLayered(now);
-        List<Map<String, Object>> news = fetchNewsLayered(now);
-        log.info("[AI Summary] Posts: {}, News: {}", posts.size(), news.size());
+            // Fetch comments associated with fetched posts
+            List<String> postIds = extractPostIds(posts);
+            List<Map<String, Object>> comments = postIds.isEmpty()
+                ? Collections.emptyList()
+                : fetchPostComments(postIds);
+            log.info("[AI Summary] Comments: {} (for {} posts)", comments.size(), postIds.size());
 
-        // Fetch comments associated with fetched posts
-        List<String> postIds = extractPostIds(posts);
-        List<Map<String, Object>> comments = postIds.isEmpty()
-            ? Collections.emptyList()
-            : fetchPostComments(postIds);
-        log.info("[AI Summary] Comments: {} (for {} posts)", comments.size(), postIds.size());
+            Map<String, Object> prevSummary = fetchPreviousSummary();
 
-        Map<String, Object> prevSummary = fetchPreviousSummary();
+            // ---- Freshness check ----
+            boolean hasFreshPosts = hasFreshPosts(posts);
+            boolean hasFreshNews = hasFreshNews(news);
+            log.info("[AI Summary] Fresh posts: {}, Fresh news: {}", hasFreshPosts, hasFreshNews);
 
-        // ---- Freshness check ----
-        boolean hasFreshPosts = hasFreshPosts(posts);
-        boolean hasFreshNews = hasFreshNews(news);
-        log.info("[AI Summary] Fresh posts: {}, Fresh news: {}", hasFreshPosts, hasFreshNews);
+            if (!hasFreshPosts && !hasFreshNews) {
+                log.info("[AI Summary] No fresh data, skipping generation");
+                saveSkippedSummary(now, posts.size(), news.size());
+                return true;
+            }
 
-        if (!hasFreshPosts && !hasFreshNews) {
-            // No new data - skip generation but record it
-            log.info("[AI Summary] No fresh data, skipping generation");
-            saveSkippedSummary(now, posts.size(), news.size());
+            // ---- Pre-summarize ALL long content via Ollama (qwen3.5 4b, fast) ----
+            preSummarizeLongContent(posts, "post");
+            preSummarizeLongContent(news, "news");
+
+            // ---- Build prompt ----
+            String dataSection = buildDataSection(posts, comments, news);
+            int newsCount = news.size();
+            int postCount = posts.size();
+            int commentCount = comments.size();
+
+            String prompt = buildPrompt(newsCount, postCount, commentCount, prevSummary, dataSection);
+            int promptTokens = estimateTokens(prompt);
+            log.info("[AI Summary] Prompt estimated tokens: {} / {} (safe budget)", promptTokens, SAFE_TOKENS);
+
+            // ---- Call Ollama (generation model: qwen3.6 36B) ----
+            long startMs = System.currentTimeMillis();
+            String content = callOllama(prompt, GENERATION_MODEL, 300);
+            if (content == null) {
+                log.warn("[AI Summary] Ollama call failed");
+                return false;
+            }
+            int genSeconds = (int) ((System.currentTimeMillis() - startMs) / 1000);
+            log.info("[AI Summary] Generation complete ({}s, {} chars)", genSeconds, content.length());
+
+            // ---- Parse and save ----
+            String title = extractTitle(content);
+            String riskLevel = extractRisk(content);
+            log.info("[AI Summary] Title: {}", title);
+            log.info("[AI Summary] Risk: {}", riskLevel);
+
+            saveSummary(title, content, riskLevel, now, newsCount, postCount, genSeconds);
+            log.info("[AI Summary] === Done ===");
             return true;
-        }
-
-        // ---- Pre-summarize long content via Ollama ----
-        preSummarizeLongContent(posts, "post");
-        preSummarizeLongContent(news, "news");
-
-        // ---- Build prompt ----
-        String dataSection = buildDataSection(posts, comments, news);
-        int newsCount = news.size();
-        int postCount = posts.size();
-        int commentCount = comments.size();
-
-        String prompt = buildPrompt(newsCount, postCount, commentCount, prevSummary, dataSection);
-        int promptTokens = estimateTokens(prompt);
-        log.info("[AI Summary] Prompt estimated tokens: {} / {} (safe budget)", promptTokens, SAFE_TOKENS);
-
-        // ---- Call Ollama ----
-        long startMs = System.currentTimeMillis();
-        String content = callOllama(prompt);
-        if (content == null) {
-            log.warn("[AI Summary] Ollama call failed");
-            return false;
-        }
-        int genSeconds = (int) ((System.currentTimeMillis() - startMs) / 1000);
-        log.info("[AI Summary] Generation complete ({}s, {} chars)", genSeconds, content.length());
-
-        // ---- Parse and save ----
-        String title = extractTitle(content);
-        String riskLevel = extractRisk(content);
-        log.info("[AI Summary] Title: {}", title);
-        log.info("[AI Summary] Risk: {}", riskLevel);
-
-        saveSummary(title, content, riskLevel, now, newsCount, postCount, genSeconds);
-        log.info("[AI Summary] === Done ===");
-        return true;
         } catch (Exception e) {
             log.error("[AI Summary] Generation failed with exception: {}", e.getMessage());
             try {
@@ -146,66 +144,97 @@ public class AiSummaryGenerator {
         }
     }
 
-    // ==================== Data Fetching ====================
+    // ==================== Layered Data Fetching ====================
 
     /**
-     * Layer 1: posts within 1 hour. Layer 2: today's posts if layer 1 insufficient.
-     * Sorted by crawl_time DESC.
+     * Layer 1: posts within 1h. Layer 2: 1-6h. Layer 3: 6-24h.
+     * Each layer fills remaining token budget.
      */
     private List<Map<String, Object>> fetchPostsLayered(LocalDateTime now) {
-        LocalDateTime oneHourAgo = now.minusHours(POST_FRESH_HOURS);
-        String sql1h = "SELECT post_id, title, author, site_name, like_count, comment_count, "
+        String sql = "SELECT post_id, title, author, site_name, like_count, comment_count, "
             + "content, trigger_keyword, crawl_time FROM social_post "
-            + "WHERE crawl_time > ? ORDER BY crawl_time DESC LIMIT ?";
-        List<Map<String, Object>> layer1 = jdbc.queryForList(sql1h,
-            java.sql.Timestamp.valueOf(oneHourAgo), MAX_POSTS);
-        log.info("[AI Summary] Posts layer1 (1h): {}", layer1.size());
+            + "WHERE crawl_time > ? ORDER BY like_count DESC, crawl_time DESC LIMIT ?";
 
-        if (!layer1.isEmpty()) {
-            return layer1;
+        // Layer 1: 1h
+        List<Map<String, Object>> all = new ArrayList<>();
+        LocalDateTime cutoff1 = now.minusHours(POST_FRESH_HOURS);
+        all.addAll(jdbc.queryForList(sql, java.sql.Timestamp.valueOf(cutoff1), MAX_POSTS));
+        log.info("[AI Summary] Posts layer1 (1h): {}", all.size());
+
+        // Layer 2: 6h
+        if (estimateListTokens(all) < POST_BUDGET) {
+            LocalDateTime cutoff2 = now.minusHours(POST_FALLBACK_HOURS_1);
+            List<Map<String, Object>> layer2 = jdbc.queryForList(sql,
+                java.sql.Timestamp.valueOf(cutoff2), MAX_POSTS);
+            // Deduplicate by post_id
+            Set<String> seen = new HashSet<>();
+            for (Map<String, Object> p : all) seen.add(str(p.get("post_id")));
+            for (Map<String, Object> p : layer2) {
+                if (!seen.contains(str(p.get("post_id")))) {
+                    all.add(p);
+                    seen.add(str(p.get("post_id")));
+                }
+            }
+            log.info("[AI Summary] Posts layer2 (6h): +{} = {}", layer2.size() - (layer2.size() - layer2.stream().filter(p -> !seen.contains(str(p.get("post_id")))).count()), all.size());
         }
 
-        // Layer 2: today
-        LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
-        List<Map<String, Object>> layer2 = jdbc.queryForList(sql1h,
-            java.sql.Timestamp.valueOf(todayStart), MAX_POSTS);
-        log.info("[AI Summary] Posts layer2 (today): {}", layer2.size());
-        return layer2;
+        // Layer 3: 24h
+        if (estimateListTokens(all) < POST_BUDGET) {
+            LocalDateTime cutoff3 = now.minusHours(POST_FALLBACK_HOURS_2);
+            List<Map<String, Object>> layer3 = jdbc.queryForList(sql,
+                java.sql.Timestamp.valueOf(cutoff3), MAX_POSTS);
+            Set<String> seen = new HashSet<>();
+            for (Map<String, Object> p : all) seen.add(str(p.get("post_id")));
+            for (Map<String, Object> p : layer3) {
+                if (!seen.contains(str(p.get("post_id")))) {
+                    all.add(p);
+                    seen.add(str(p.get("post_id")));
+                }
+            }
+            log.info("[AI Summary] Posts layer3 (24h): total={}", all.size());
+        }
+
+        return all;
     }
 
     /**
-     * Layer 1: news within 12 hours. Layer 2: today's news if layer 1 insufficient.
-     * Sorted by crawl_time DESC.
+     * Layer 1: news within 12h. Layer 2: 24h if token budget allows.
      */
     private List<Map<String, Object>> fetchNewsLayered(LocalDateTime now) {
-        LocalDateTime twelveHoursAgo = now.minusHours(NEWS_FRESH_HOURS);
-        String sql12h = "SELECT title, source, keywords, content, publish_date, crawl_time "
+        String sql = "SELECT title, source, keywords, content, publish_date, crawl_time "
             + "FROM news_article WHERE crawl_time > ? ORDER BY crawl_time DESC LIMIT ?";
-        List<Map<String, Object>> layer1 = jdbc.queryForList(sql12h,
-            java.sql.Timestamp.valueOf(twelveHoursAgo), MAX_NEWS);
-        log.info("[AI Summary] News layer1 (12h): {}", layer1.size());
 
-        if (!layer1.isEmpty()) {
-            return layer1;
+        // Layer 1: 12h
+        List<Map<String, Object>> all = new ArrayList<>();
+        LocalDateTime cutoff1 = now.minusHours(NEWS_FRESH_HOURS);
+        all.addAll(jdbc.queryForList(sql, java.sql.Timestamp.valueOf(cutoff1), MAX_NEWS));
+        log.info("[AI Summary] News layer1 (12h): {}", all.size());
+
+        // Layer 2: 24h
+        if (estimateListTokens(all) < NEWS_BUDGET) {
+            LocalDateTime cutoff2 = now.minusHours(NEWS_FALLBACK_HOURS);
+            List<Map<String, Object>> layer2 = jdbc.queryForList(sql,
+                java.sql.Timestamp.valueOf(cutoff2), MAX_NEWS);
+            Set<String> seen = new HashSet<>();
+            for (Map<String, Object> n : all) seen.add(str(n.get("url")) + str(n.get("title")));
+            for (Map<String, Object> n : layer2) {
+                String key = str(n.get("url")) + str(n.get("title"));
+                if (!seen.contains(key)) {
+                    all.add(n);
+                    seen.add(key);
+                }
+            }
+            log.info("[AI Summary] News layer2 (24h): total={}", all.size());
         }
 
-        // Layer 2: today
-        LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
-        List<Map<String, Object>> layer2 = jdbc.queryForList(sql12h,
-            java.sql.Timestamp.valueOf(todayStart), MAX_NEWS);
-        log.info("[AI Summary] News layer2 (today): {}", layer2.size());
-        return layer2;
+        return all;
     }
 
-    /**
-     * Fetch comments for given post IDs, TOP 20 per post by like_count DESC.
-     */
-    private List<Map<String, Object>> fetchPostComments(List<String> postIds) {
-        if (postIds.isEmpty()) {
-            return Collections.emptyList();
-        }
+    // ==================== Comments & Previous ====================
 
-        // Build IN clause safely
+    private List<Map<String, Object>> fetchPostComments(List<String> postIds) {
+        if (postIds.isEmpty()) return Collections.emptyList();
+
         String placeholders = String.join(",", Collections.nCopies(postIds.size(), "?"));
         String sql = "SELECT sc.post_id, sc.commenter, sc.comment_content, "
             + "sc.like_count AS comment_likes, "
@@ -216,7 +245,6 @@ public class AiSummaryGenerator {
 
         List<Map<String, Object>> allComments = jdbc.queryForList(sql, postIds.toArray());
 
-        // Group by post_id and take TOP N per post
         Map<String, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
         for (Map<String, Object> c : allComments) {
             String pid = str(c.get("post_id"));
@@ -231,9 +259,6 @@ public class AiSummaryGenerator {
         return topComments;
     }
 
-    /**
-     * Fetch the previous complete report for trend comparison.
-     */
     private Map<String, Object> fetchPreviousSummary() {
         List<Map<String, Object>> rows = jdbc.queryForList(
             "SELECT title, risk_level, content, news_count, social_count, "
@@ -244,19 +269,16 @@ public class AiSummaryGenerator {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    // ==================== Skip Logic ====================
+    // ==================== Freshness Check ====================
 
     private boolean hasFreshPosts(List<Map<String, Object>> posts) {
         if (posts.isEmpty()) return false;
-        // If all posts are older than 1 hour, they are not fresh
         LocalDateTime cutoff = LocalDateTime.now().minusHours(POST_FRESH_HOURS);
         for (Map<String, Object> p : posts) {
             Object ct = p.get("crawl_time");
             if (ct != null) {
                 LocalDateTime crawlTime = parseDateTime(ct);
-                if (crawlTime != null && crawlTime.isAfter(cutoff)) {
-                    return true;
-                }
+                if (crawlTime != null && crawlTime.isAfter(cutoff)) return true;
             }
         }
         return false;
@@ -269,9 +291,7 @@ public class AiSummaryGenerator {
             Object ct = n.get("crawl_time");
             if (ct != null) {
                 LocalDateTime crawlTime = parseDateTime(ct);
-                if (crawlTime != null && crawlTime.isAfter(cutoff)) {
-                    return true;
-                }
+                if (crawlTime != null && crawlTime.isAfter(cutoff)) return true;
             }
         }
         return false;
@@ -288,65 +308,67 @@ public class AiSummaryGenerator {
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             "skipped", "Skipped - insufficient fresh data", content, "low",
             java.sql.Timestamp.valueOf(now), java.sql.Timestamp.valueOf(now),
-            newsCount, postCount, MODEL_NAME, 0
+            newsCount, postCount, GENERATION_MODEL, 0
         );
     }
 
-    // ==================== Pre-summarization ====================
+    // ==================== Pre-summarization (qwen3.5 4b) ====================
 
     /**
-     * For posts/news whose content exceeds the token threshold,
-     * call Ollama to generate a compact pre-summary.
-     * Replaces the content field with the pre-summary (title always kept intact).
+     * ALL items exceeding PRE_SUMMARY_THRESHOLD tokens get LLM pre-summary.
+     * No truncation fallback — every long item goes through the presumer.
+     * Uses qwen3.5 4b for speed (~2s per call vs ~30s for 36B).
      */
     private void preSummarizeLongContent(List<Map<String, Object>> items, String type) {
-        int callCount = 0;
-        int maxCalls = "news".equals(type) ? MAX_PRE_SUMMARIZE_CALLS : MAX_PRE_SUMMARIZE_CALLS;
+        int processed = 0;
+        int total = items.size();
         for (Map<String, Object> item : items) {
             String title = str(item.get("title"));
             String content = str(item.get("content"));
             if (content.isEmpty() || content.equals(title)) continue;
 
-            int threshold = "news".equals(type) ? NEWS_SUMMARY_THRESHOLD : POST_SUMMARY_THRESHOLD;
             int tokens = estimateTokens(content);
-
-            if (tokens > threshold) {
-                if (callCount < maxCalls) {
-                    log.info("[AI Summary] Pre-summarizing {}/{} {} ({} tokens): {}",
-                        callCount + 1, maxCalls, type, tokens, truncate(title, 60));
-                    String summary = callPreSummarize(title, content, type);
-                    if (summary != null && !summary.isEmpty()) {
-                        item.put("_pre_summary", summary);
+            if (tokens > PRE_SUMMARY_THRESHOLD) {
+                processed++;
+                log.info("[AI Summary] Pre-summarizing {}/{} {} ({} tokens): {}",
+                    processed, total, type, tokens, truncate(title, 60));
+                String summary = callPreSummarize(title, content, type);
+                if (summary != null && !summary.isEmpty()) {
+                    item.put("_pre_summary", summary);
+                }
+                // Also pre-summarize associated comments if any are long
+                if ("post".equals(type) && item.containsKey("comment_content")) {
+                    String commentContent = str(item.get("comment_content"));
+                    if (estimateTokens(commentContent) > PRE_SUMMARY_THRESHOLD) {
+                        String cs = callPreSummarize(str(item.get("post_title")), commentContent, "comment");
+                        if (cs != null && !cs.isEmpty()) {
+                            item.put("_pre_comment_summary", cs);
+                        }
                     }
-                    callCount++;
-                } else {
-                    // Fallback: truncate to 500 chars
-                    item.put("_pre_summary", truncate(content, 500));
-                    log.info("[AI Summary] Truncating {} ({} tokens, pre-summary limit reached): {}",
-                        type, tokens, truncate(title, 60));
                 }
             }
+        }
+        if (processed > 0) {
+            log.info("[AI Summary] Pre-summarized {} {} items with {}", processed, type, PRESUMMARY_MODEL);
         }
     }
 
     private String callPreSummarize(String title, String content, String type) {
-        // Limit pre-summary input to avoid Ollama overload
-        String truncatedContent = truncate(content, 2000);
         String prompt;
-        if ("news".equals(type)) {
-            prompt = "\u8bf7\u4e3a\u4ee5\u4e0b\u65b0\u95fb\u751f\u6210150\u5b57\u4ee5\u5185\u7684\u6838\u5fc3\u6458\u8981\uff0c\u4fdd\u7559\u5173\u952e\u4fe1\u606f\uff08\u65f6\u95f4\u3001\u5730\u70b9\u3001\u4eba\u7269\u3001\u4e8b\u4ef6\u3001\u5f71\u54cd\uff09\uff1a\u6807\u9898\uff1a"
-                + title + " \u6b63\u6587\uff1a" + truncatedContent;
+        if ("comment".equals(type)) {
+            prompt = "请为以下评论内容生成50字以内的核心摘要，保留关键观点：\n标题：" + title + "\n内容：" + content;
+        } else if ("news".equals(type)) {
+            prompt = "请为以下新闻生成150字以内的核心摘要，保留关键信息（时间、地点、人物、事件、影响）：\n标题：" + title + "\n正文：" + content;
         } else {
-            prompt = "\u8bf7\u4e3a\u4ee5\u4e0b\u5e16\u5b50\u751f\u6210100\u5b57\u4ee5\u5185\u7684\u6838\u5fc3\u6458\u8981\uff0c\u4fdd\u7559\u5173\u952e\u4fe1\u606f\uff08\u8bdd\u9898\u3001\u4f5c\u8005\u89c2\u70b9\u3001\u5173\u952e\u7ec6\u8282\uff09\uff1a\u6807\u9898\uff1a"
-                + title + " \u6b63\u6587\uff1a" + truncatedContent;
+            prompt = "请为以下帖子生成100字以内的核心摘要，保留关键信息（话题、作者观点、关键细节）：\n标题：" + title + "\n正文：" + content;
         }
 
         try {
             Map<String, Object> body = Map.of(
-                "model", MODEL_NAME,
+                "model", PRESUMMARY_MODEL,
                 "messages", List.of(
                     Map.of("role", "system", "content",
-                        "\u4f60\u662f\u4e00\u4e2a\u6587\u672c\u6458\u8981\u52a9\u624b\u3002\u8bf7\u7528\u7b80\u6d01\u7684\u4e2d\u6587\u6982\u62ec\u4ee5\u4e0b\u5185\u5bb9\u7684\u6838\u5fc3\u8981\u70b9\u3002"),
+                        "你是一个文本摘要助手。请用简洁的中文概括以下内容的核心要点。"),
                     Map.of("role", "user", "content", prompt)
                 ),
                 "stream", false
@@ -374,18 +396,12 @@ public class AiSummaryGenerator {
 
     // ==================== Data Formatting ====================
 
-    /**
-     * Build the complete data section for the prompt.
-     * Includes posts with embedded comments, and news.
-     * Respects token budgets.
-     */
     private String buildDataSection(List<Map<String, Object>> posts,
                                      List<Map<String, Object>> comments,
                                      List<Map<String, Object>> news) {
         StringBuilder sb = new StringBuilder();
         int usedTokens = 0;
 
-        // Group comments by post_id for easy lookup
         Map<String, List<Map<String, Object>>> commentsByPost = new LinkedHashMap<>();
         for (Map<String, Object> c : comments) {
             String pid = str(c.get("post_id"));
@@ -394,7 +410,7 @@ public class AiSummaryGenerator {
 
         // ---- Posts + Comments section ----
         if (!posts.isEmpty()) {
-            sb.append("=== \u793e\u4ea4\u5e16\u5b50\u4e0e\u8bc4\u8bba ===\n");
+            sb.append("=== 社交帖子与评论 ===\n");
             int postTokens = 0;
             for (Map<String, Object> p : posts) {
                 String pid = str(p.get("post_id"));
@@ -410,7 +426,7 @@ public class AiSummaryGenerator {
 
         // ---- News section ----
         if (!news.isEmpty()) {
-            sb.append("\n=== \u65b0\u95fb\u6587\u7ae0 ===\n");
+            sb.append("\n=== 新闻文章 ===\n");
             int newsTokens = 0;
             for (Map<String, Object> n : news) {
                 String item = formatNews(n);
@@ -425,9 +441,6 @@ public class AiSummaryGenerator {
         return sb.toString();
     }
 
-    /**
-     * Build a single post block with its associated comments.
-     */
     private String buildPostBlock(Map<String, Object> post, List<Map<String, Object>> comments) {
         String site = str(post.get("site_name"));
         String author = str(post.get("author"));
@@ -436,7 +449,6 @@ public class AiSummaryGenerator {
         int commentCount = intVal(post.get("comment_count"));
         String keyword = str(post.get("trigger_keyword"));
 
-        // Content: use pre-summary if available, otherwise full content
         String content;
         Object preSummary = post.get("_pre_summary");
         if (preSummary != null) {
@@ -447,37 +459,32 @@ public class AiSummaryGenerator {
 
         StringBuilder sb = new StringBuilder();
         sb.append("[").append(site).append("] @").append(author).append(": ").append(title).append("\n");
-        sb.append("\u4e92\u52a8: ").append(likes).append("\u8d5e ").append(commentCount)
-          .append("\u8bc4 | \u5173\u952e\u8bcd: ").append(keyword).append("\n");
+        sb.append("互动: ").append(likes).append("赞 ").append(commentCount)
+          .append("评 | 关键词: ").append(keyword).append("\n");
         if (!content.isEmpty() && !content.equals(title)) {
-            sb.append("\u5185\u5bb9: ").append(content).append("\n");
+            sb.append("内容: ").append(content).append("\n");
         }
 
-        // Add top comments
         if (!comments.isEmpty()) {
-            sb.append("  \u70ed\u95e8\u8bc4\u8bba:\n");
+            sb.append("  热门评论:\n");
             int idx = 1;
             for (Map<String, Object> c : comments) {
                 String commenter = str(c.get("commenter"));
                 String commentContent = str(c.get("comment_content"));
                 int cLikes = intVal(c.get("comment_likes"));
                 sb.append("  ").append(idx++).append(". ").append(commenter)
-                  .append(" (\ud83d\udc4d").append(cLikes).append("): ").append(commentContent).append("\n");
+                  .append(" (👍").append(cLikes).append("): ").append(commentContent).append("\n");
             }
         }
 
         return sb.toString();
     }
 
-    /**
-     * Format a single news item. Title always kept intact. Content uses pre-summary if available.
-     */
     private String formatNews(Map<String, Object> n) {
         String title = str(n.get("title"));
         String source = str(n.get("source"));
         String keywords = str(n.get("keywords"));
 
-        // Content: use pre-summary if available, otherwise full content
         String content;
         Object preSummary = n.get("_pre_summary");
         if (preSummary != null) {
@@ -489,45 +496,74 @@ public class AiSummaryGenerator {
         StringBuilder sb = new StringBuilder();
         sb.append("[").append(source).append("] ").append(title).append("\n");
         if (!keywords.isEmpty()) {
-            sb.append("\u5173\u952e\u8bcd: ").append(keywords).append("\n");
+            sb.append("关键词: ").append(keywords).append("\n");
         }
         if (!content.isEmpty() && !content.equals(title)) {
-            sb.append("\u6b63\u6587: ").append(content).append("\n");
+            sb.append("正文: ").append(content).append("\n");
         }
         return sb.toString();
     }
 
+    // ==================== Prompt Construction ====================
+
     /**
-     * Build the previous summary section for trend comparison.
-     * Extracts core summary from the previous report content.
+     * Build prompt with previous summary embedded as context.
+     * The model sees the previous report as part of the conversation history,
+     * enabling Thinking Preservation for trend comparison.
      */
+    private String buildPrompt(int newsCount, int postCount, int commentCount,
+                               Map<String, Object> prevSummary, String dataSection) {
+        StringBuilder sb = new StringBuilder();
+
+        // Previous summary as context (for Thinking Preservation)
+        String prevSection = buildPrevSection(prevSummary);
+
+        sb.append("请根据以下舆情数据，生成一份专业的舆情监测简报。\n\n");
+
+        sb.append("数据概览：").append(newsCount).append("条新闻，").append(postCount).append("条社交帖子。\n");
+
+        if (!prevSection.isEmpty()) {
+            sb.append(prevSection).append("\n");
+        }
+
+        sb.append("\n数据内容：\n");
+        sb.append(dataSection).append("\n\n");
+
+        sb.append("请严格按照以下格式输出 Markdown 简报：\n\n");
+        sb.append("## 1. 标题\n用一句话概括本时段舆情态势\n\n");
+        sb.append("## 2. 核心摘要\n3-5句话总结最重要的事件和趋势\n\n");
+        sb.append("## 3. 分类统计\n按主题分类（军事、贸易、人权、外交、科技、社会等），每个分类列出关键事件\n\n");
+        sb.append("## 4. 热门互动分析\n分析点赞/评论互动最高的帖子和评论，总结舆论焦点\n\n");
+        sb.append("## 5. 舆情变化对比\n与上一次简报对比，分析风险趋势变化（升高/持平/下降），新增的重要议题\n\n");
+        sb.append("## 6. 风险评级\n评级：低/中/高\n\n说明理由\n\n");
+        sb.append("## 7. 关注建议\n下一步需要重点关注的方向（3-5条）\n\n");
+        sb.append("请用中文输出。");
+
+        return sb.toString();
+    }
+
     private String buildPrevSection(Map<String, Object> prev) {
         if (prev == null) return "";
         String title = str(prev.get("title"));
         String risk = str(prev.get("risk_level"));
         String time = str(prev.get("create_time"));
-        int newsCount = intVal(prev.get("news_count"));
-        int socialCount = intVal(prev.get("social_count"));
         String content = str(prev.get("content"));
 
-        // Extract core summary part
         String summaryText = extractCoreSummary(content);
 
-        return "\n=== PREVIOUS REPORT (Time: " + time + ") ===\n"
-            + "Title: " + title + "\n"
-            + "Risk Level: " + risk + "\n"
-            + "Data Volume: " + newsCount + " news + " + socialCount + " social posts\n"
-            + "Core Summary: " + truncate(summaryText, 500);
+        return "\n=== 上次简报 (时间: " + time + ") ===\n"
+            + "标题: " + title + "\n"
+            + "风险等级: " + risk + "\n"
+            + "核心摘要: " + truncate(summaryText, 500);
     }
 
     private String extractCoreSummary(String content) {
         if (content == null || content.isEmpty()) return "";
-        // Find content after "## 2" or "Core Summary" up to "## 3"
-        String[] lines = content.split("\n");
+        String[] lines = content.split("\\n");
         boolean inSummary = false;
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
-            if (line.contains("## 2") || line.contains("Core Summary") || line.contains("\u6838\u5fc3\u6458\u8981")) {
+            if (line.contains("## 2") || line.contains("核心摘要") || line.contains("Core Summary")) {
                 inSummary = true;
                 continue;
             }
@@ -536,39 +572,6 @@ public class AiSummaryGenerator {
         }
         String result = sb.toString().trim();
         return result.isEmpty() ? truncate(content, 500) : result;
-    }
-
-    // ==================== Prompt Construction ====================
-
-    private String buildPrompt(int newsCount, int postCount, int commentCount,
-                               Map<String, Object> prevSummary, String dataSection) {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("\u8bf7\u6839\u636e\u4ee5\u4e0b\u8206\u60c5\u6570\u636e\uff0c\u751f\u6210\u4e00\u4efd\u4e13\u4e1a\u7684\u8206\u60c5\u76d1\u6d4b\u7b80\u62a5\u3002\n\n");
-
-        sb.append("\u6570\u636e\u6982\u89c8\uff1a").append(newsCount).append("\u6761\u65b0\u95fb\uff0c")
-          .append(postCount).append("\u6761\u793e\u4ea4\u5e16\u5b50\u3002\n");
-
-        // Previous report for trend comparison
-        String prevSection = buildPrevSection(prevSummary);
-        if (!prevSection.isEmpty()) {
-            sb.append(prevSection).append("\n");
-        }
-
-        sb.append("\n\u6570\u636e\u5185\u5bb9\uff1a\n");
-        sb.append(dataSection).append("\n\n");
-
-        sb.append("\u8bf7\u4e25\u683c\u6309\u7167\u4ee5\u4e0b\u683c\u5f0f\u8f93\u51fa Markdown \u7b80\u62a5\uff1a\n\n");
-        sb.append("## 1. \u6807\u9898\n\u7528\u4e00\u53e5\u8bdd\u6982\u62ec\u672c\u65f6\u6bb5\u8206\u60c5\u6001\u52bf\n\n");
-        sb.append("## 2. \u6838\u5fc3\u6458\u8981\n3-5\u53e5\u8bdd\u603b\u7ed3\u6700\u91cd\u8981\u7684\u4e8b\u4ef6\u548c\u8d8b\u52bf\n\n");
-        sb.append("## 3. \u5206\u7c7b\u7edf\u8ba1\n\u6309\u4e3b\u9898\u5206\u7c7b\uff08\u519b\u4e8b\u3001\u8d38\u6613\u3001\u4eba\u6743\u3001\u5916\u4ea4\u3001\u79d1\u6280\u3001\u793e\u4f1a\u7b49\uff09\uff0c\u6bcf\u4e2a\u5206\u7c7b\u5217\u51fa\u5173\u952e\u4e8b\u4ef6\n\n");
-        sb.append("## 4. \u70ed\u95e8\u4e92\u52a8\u5206\u6790\n\u5206\u6790\u70b9\u8d5e/\u8bc4\u8bba\u4e92\u52a8\u6700\u9ad8\u7684\u5e16\u5b50\u548c\u8bc4\u8bba\uff0c\u603b\u7ed3\u8206\u8bba\u7126\u70b9\n\n");
-        sb.append("## 5. \u8206\u60c5\u53d8\u5316\u5bf9\u6bd4\n\u4e0e\u4e0a\u4e00\u6b21\u7b80\u62a5\u5bf9\u6bd4\uff0c\u5206\u6790\u98ce\u9669\u8d8b\u52bf\u53d8\u5316\uff08\u5347\u9ad8/\u6301\u5e73/\u4e0b\u964d\uff09\uff0c\u65b0\u589e\u7684\u91cd\u8981\u8bae\u9898\n\n");
-        sb.append("## 6. \u98ce\u9669\u8bc4\u7ea7\n\u8bc4\u7ea7\uff1a\u4f4e/\u4e2d/\u9ad8\n\n\u8bf4\u660e\u7406\u7531\n\n");
-        sb.append("## 7. \u5173\u6ce8\u5efa\u8bae\n\u4e0b\u4e00\u6b65\u9700\u8981\u91cd\u70b9\u5173\u6ce8\u7684\u65b9\u5411\uff083-5\u6761\uff09\n\n");
-        sb.append("\u8bf7\u7528\u4e2d\u6587\u8f93\u51fa\u3002");
-
-        return sb.toString();
     }
 
     // ==================== Ollama Calls ====================
@@ -588,13 +591,16 @@ public class AiSummaryGenerator {
         }
     }
 
-    private String callOllama(String prompt) {
+    /**
+     * Generic Ollama chat call. Supports different models.
+     */
+    private String callOllama(String prompt, String model, int timeoutSeconds) {
         try {
             Map<String, Object> body = Map.of(
-                "model", MODEL_NAME,
+                "model", model,
                 "messages", List.of(
                     Map.of("role", "system", "content",
-                        "\u4f60\u662f\u4e00\u4e2a\u4e13\u4e1a\u7684\u8206\u60c5\u5206\u6790\u5e08\uff0c\u670d\u52a1\u4e8e\u4e00\u4e2a\u8206\u60c5\u76d1\u6d4b\u5e73\u53f0\u3002"),
+                        "你是一个专业的舆情分析师，服务于一个舆情监测平台。"),
                     Map.of("role", "user", "content", prompt)
                 ),
                 "stream", false
@@ -604,7 +610,7 @@ public class AiSummaryGenerator {
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(OLLAMA_BASE + "/api/chat"))
-                .timeout(java.time.Duration.ofSeconds(300))
+                .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
@@ -624,9 +630,9 @@ public class AiSummaryGenerator {
     // ==================== Parsing & Storage ====================
 
     private String extractTitle(String content) {
-        String[] lines = content.split("\n");
+        String[] lines = content.split("\\n");
         for (int i = 0; i < lines.length; i++) {
-            if (lines[i].contains("## 1") || lines[i].contains("Title") || lines[i].contains("\u6807\u9898")) {
+            if (lines[i].contains("## 1") || lines[i].contains("Title") || lines[i].contains("标题")) {
                 for (int j = i + 1; j < Math.min(i + 5, lines.length); j++) {
                     String candidate = lines[j].trim();
                     if (!candidate.isEmpty() && !candidate.startsWith("#")) {
@@ -635,28 +641,26 @@ public class AiSummaryGenerator {
                 }
             }
         }
-        return "Sentiment Report " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        return "舆情简报 " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
     }
 
     private String extractRisk(String content) {
-        String[] lines = content.split("\n");
+        String[] lines = content.split("\\n");
         for (String line : lines) {
-            if ((line.contains("Rating") || line.contains("Risk") || line.contains("\u8bc4\u7ea7") || line.contains("\u98ce\u9669"))
-                && line.startsWith("#")) {
+            if ((line.contains("评级") || line.contains("风险")) && line.startsWith("#")) {
                 String upper = line.toUpperCase();
-                if (upper.contains("HIGH") || upper.contains("\u9ad8")) return "\u9ad8";
-                if (upper.contains("LOW") || upper.contains("\u4f4e")) return "\u4f4e";
-                return "\u4e2d";
+                if (upper.contains("高") || upper.contains("HIGH")) return "高";
+                if (upper.contains("低") || upper.contains("LOW")) return "低";
+                return "中";
             }
-            // Also check for bold rating on its own line
-            if (line.contains("Rating") || line.contains("\u8bc4\u7ea7")) {
+            if (line.contains("评级") || line.contains("风险")) {
                 String upper = line.toUpperCase();
-                if (upper.contains("HIGH") || upper.contains("\u9ad8")) return "\u9ad8";
-                if (upper.contains("LOW") || upper.contains("\u4f4e")) return "\u4f4e";
-                if (upper.contains("MEDIUM") || upper.contains("\u4e2d")) return "\u4e2d";
+                if (upper.contains("高") || upper.contains("HIGH")) return "高";
+                if (upper.contains("低") || upper.contains("LOW")) return "低";
+                if (upper.contains("中") || upper.contains("MEDIUM")) return "中";
             }
         }
-        return "\u4e2d";
+        return "中";
     }
 
     private void saveSummary(String title, String content, String riskLevel,
@@ -667,7 +671,7 @@ public class AiSummaryGenerator {
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             "hourly", title, content, riskLevel,
             java.sql.Timestamp.valueOf(dataEnd), java.sql.Timestamp.valueOf(dataEnd),
-            newsCount, socialCount, MODEL_NAME, genSeconds
+            newsCount, socialCount, GENERATION_MODEL, genSeconds
         );
     }
 
@@ -677,11 +681,17 @@ public class AiSummaryGenerator {
         List<String> ids = new ArrayList<>();
         for (Map<String, Object> p : posts) {
             Object pid = p.get("post_id");
-            if (pid != null) {
-                ids.add(pid.toString());
-            }
+            if (pid != null) ids.add(pid.toString());
         }
         return ids;
+    }
+
+    private int estimateListTokens(List<Map<String, Object>> items) {
+        int total = 0;
+        for (Map<String, Object> item : items) {
+            total += estimateTokens(str(item.get("content")));
+        }
+        return total;
     }
 
     private LocalDateTime parseDateTime(Object dt) {
@@ -694,7 +704,6 @@ public class AiSummaryGenerator {
                 return (LocalDateTime) dt;
             }
             String s = dt.toString();
-            // Try common formats
             return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
         } catch (Exception e) {
             try {
