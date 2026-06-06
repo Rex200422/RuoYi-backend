@@ -30,7 +30,7 @@ public class AiSummaryGenerator {
     private static final Logger log = LoggerFactory.getLogger(AiSummaryGenerator.class);
 
     private static final String OLLAMA_BASE = "http://200m.frpee.com:18138";
-    private static final String GENERATION_MODEL = "qwen3.6:latest";
+    private static final String GENERATION_MODEL = "qwen3.6:27b";
     private static final String PRESUMMARY_MODEL = "qwen3.5:4b-q4_K_M";
 
     // Token estimation: Chinese ~1.5 tokens/char
@@ -152,7 +152,7 @@ public class AiSummaryGenerator {
      */
     private List<Map<String, Object>> fetchPostsLayered(LocalDateTime now) {
         String sql = "SELECT post_id, title, author, site_name, like_count, comment_count, "
-            + "content, trigger_keyword, crawl_time FROM social_post "
+            + "content, pre_summary, trigger_keyword, crawl_time FROM social_post "
             + "WHERE crawl_time > ? ORDER BY like_count DESC, crawl_time DESC LIMIT ?";
 
         // Layer 1: 1h
@@ -326,6 +326,13 @@ public class AiSummaryGenerator {
             String title = str(item.get("title"));
             String content = str(item.get("content"));
             if (content.isEmpty() || content.equals(title)) continue;
+
+            // Check if pre_summary already cached in DB
+            String cachedSummary = str(item.get("pre_summary"));
+            if (!cachedSummary.isEmpty()) {
+                item.put("_pre_summary", cachedSummary);
+                continue; // Skip LLM call, use cached
+            }
 
             int tokens = estimateTokens(content);
             if (tokens > PRE_SUMMARY_THRESHOLD) {
@@ -673,6 +680,46 @@ public class AiSummaryGenerator {
             java.sql.Timestamp.valueOf(dataEnd), java.sql.Timestamp.valueOf(dataEnd),
             newsCount, socialCount, GENERATION_MODEL, genSeconds
         );
+    }
+
+
+    /**
+     * Save generated pre-summaries back to the database so they can be reused
+     * on the next generation run without calling Ollama again.
+     */
+    private void savePreSummaries(List<Map<String, Object>> posts, List<Map<String, Object>> news) {
+        int saved = 0;
+        for (Map<String, Object> p : posts) {
+            Object pre = p.get("_pre_summary");
+            if (pre != null && !str(pre).isEmpty()) {
+                try {
+                    jdbc.update(
+                        "UPDATE social_post SET pre_summary = ? WHERE post_id = ? AND (pre_summary IS NULL OR pre_summary = '')",
+                        str(pre), str(p.get("post_id"))
+                    );
+                    saved++;
+                } catch (Exception e) {
+                    log.warn("[AI Summary] Failed to save pre_summary for post: {}", e.getMessage());
+                }
+            }
+        }
+        for (Map<String, Object> n : news) {
+            Object pre = n.get("_pre_summary");
+            if (pre != null && !str(pre).isEmpty()) {
+                try {
+                    jdbc.update(
+                        "UPDATE news_article SET pre_summary = ? WHERE title = ? AND (pre_summary IS NULL OR pre_summary = '')",
+                        str(pre), str(n.get("title"))
+                    );
+                    saved++;
+                } catch (Exception e) {
+                    log.warn("[AI Summary] Failed to save pre_summary for news: {}", e.getMessage());
+                }
+            }
+        }
+        if (saved > 0) {
+            log.info("[AI Summary] Saved {} pre-summaries to database", saved);
+        }
     }
 
     // ==================== Utility Methods ====================
