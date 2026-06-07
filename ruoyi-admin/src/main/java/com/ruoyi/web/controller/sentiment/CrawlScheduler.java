@@ -137,17 +137,31 @@ public class CrawlScheduler {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             pb.redirectErrorStream(true);
             Process process = pb.start();
+            
+            // Capture stdout+stderr for error reporting
+            StringBuilder output = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+            
             int exitCode = process.waitFor();
 
             if (exitCode == 0) {
                 log.info("Crawl completed successfully for config id={}", config.getId());
-                // Note: last_crawl_time already updated at start
             } else {
-                log.warn("Crawl script exited with code {} for config id={}", exitCode, config.getId());
+                String errorDetail = output.length() > 2000 
+                    ? output.substring(output.length() - 2000) 
+                    : output.toString();
+                log.warn("Crawl script exited with code {} for config id={}: {}", 
+                         exitCode, config.getId(), errorDetail.substring(0, Math.min(200, errorDetail.length())));
                 CrawlLog failedLog = new CrawlLog();
                 failedLog.setId(crawlLog.getId());
                 failedLog.setStatus("failed");
-                failedLog.setErrorMsg("Script exited with code " + exitCode);
+                failedLog.setErrorMsg("Exit code " + exitCode + ": " + errorDetail.trim());
                 failedLog.setEndTime(new Date());
                 crawlLogService.update(failedLog);
             }
