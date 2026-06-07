@@ -374,13 +374,18 @@ def main():
 
     负责：
       1. 解析命令行参数
-      2. 记录爬取开始时间
-      3. 调用 crawl() 执行爬虫
-      4. 成功时更新日志和配置
-      5. 失败时记录错误信息
+      2. 如果传入了 --keyword，覆盖默认关键词列表
+      3. 记录爬取开始时间
+      4. 调用 crawl() 执行爬虫
+      5. 成功时更新日志和配置
+      6. 失败时记录错误信息
     """
+    global MAIN_KEYWORDS
     args = parse_args()
     max_articles = args.max if args.max is not None else DEFAULT_MAX_ARTICLES
+    # 如果传入了 --keyword（如 "china,taiwan"），覆盖默认关键词
+    if args.keyword:
+        MAIN_KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
     update_crawl_log_start(args.log_id)
     try:
         items_found, items_new, items_updated = crawl(DEFAULT_MAX_PAGES, max_articles)
