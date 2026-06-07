@@ -19,9 +19,18 @@
 
         <!-- SpringBoot Web容器 -->
          <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-web</artifactId>
+             <exclusions>
+                 <!-- Exclude jul-to-slf4j to prevent Tomcat NIO thread crashes -->
+                 <!-- When Tomcat threads encounter errors, JUL→SLF4J→logback path fails -->
+                 <!-- with NoClassDefFoundError, killing the thread. -->
+                 <exclusion>
+                     <groupId>org.slf4j</groupId>
+                     <artifactId>jul-to-slf4j</artifactId>
+                 </exclusion>
+             </exclusions>
+         </dependency>
 
         <!-- SpringBoot 拦截器 -->
         <dependency>
