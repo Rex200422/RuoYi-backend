@@ -7,13 +7,13 @@ import pymysql
 from content_utils import clean_content_html
 from proxy_config import PROXIES
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
+from crawler_config import DB, USER_AGENT
+from common_db import get_db
 
-DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
-HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36", "Referer": "https://edition.cnn.com/"}
+HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://edition.cnn.com/"}
 DEFAULT_MAX_ARTICLES = 3
 CNN_RSS_FEEDS = ["http://rss.cnn.com/rss/edition.rss", "http://rss.cnn.com/rss/edition_world.rss"]
 
-def get_db(): return pymysql.connect(**DB_CONFIG)
 def clean(text): return re.sub(r"\s+", " ", text).strip()
 # 页脚/版权等无用文本模式
 BOILERPLATE_PATTERNS = [

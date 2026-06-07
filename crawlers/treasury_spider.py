@@ -17,24 +17,14 @@ import requests
 from bs4 import BeautifulSoup
 import pymysql
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
+from crawler_config import DB, USER_AGENT
+from common_db import get_db
 
 warnings.filterwarnings("ignore")
 
 # --------------- config ---------------
 from proxy_config import PROXIES, get_playwright_proxy
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "200422",
-    "database": "ry-vue",
-    "charset": "utf8mb4",
-}
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
-    )
-}
+HEADERS = {"User-Agent": USER_AGENT}
 
 MAIN_KEYWORDS = ["china", "taiwan"]
 SUB_KEYWORDS = [
@@ -48,9 +38,6 @@ DEFAULT_MAX_ARTICLES = 2
 BASE_URL = "https://home.treasury.gov/news/press-releases"
 
 # --------------- helpers ---------------
-
-def get_db():
-    return pymysql.connect(**DB_CONFIG)
 
 
 def clean(text):

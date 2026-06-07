@@ -45,6 +45,7 @@ playwright install chromium
 ```
 
 **验证环境：**
+
 ```bash
 python -c "import pymysql, requests, bs4; print('依赖OK')"
 python -c "from playwright.sync_api import sync_playwright; print('Playwright OK')"
@@ -75,14 +76,14 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
 
 **其他配置（通常无需修改）：**
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `MAX_ARTICLES` | 10 | 新闻爬虫每次最多爬取条数 |
-| `MAX_PAGES` | 3 | 新闻爬虫列表页最多翻页数 |
-| `MAX_PER_KEYWORD` | 2 | 社媒爬虫每个关键词最多爬取条数 |
-| `REQUEST_TIMEOUT` | 30 | HTTP 请求超时（秒） |
-| `REQUEST_DELAY` | (1, 3) | 请求间隔随机范围（秒） |
-| `USER_AGENT` | Chrome UA | 模拟浏览器 |
+| 配置项              | 默认值    | 说明                           |
+| ------------------- | --------- | ------------------------------ |
+| `MAX_ARTICLES`    | 10        | 新闻爬虫每次最多爬取条数       |
+| `MAX_PAGES`       | 3         | 新闻爬虫列表页最多翻页数       |
+| `MAX_PER_KEYWORD` | 2         | 社媒爬虫每个关键词最多爬取条数 |
+| `REQUEST_TIMEOUT` | 30        | HTTP 请求超时（秒）            |
+| `REQUEST_DELAY`   | (1, 3)    | 请求间隔随机范围（秒）         |
+| `USER_AGENT`      | Chrome UA | 模拟浏览器                     |
 
 > ⚠️ 所有配置集中在 `crawler_config.py` 里改，不要用环境变量传配置。
 
@@ -94,27 +95,27 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
 
 ### 必须修改的文件（开发者改）
 
-| 文件 | 说明 |
-|------|------|
+| 文件                  | 说明                        |
+| --------------------- | --------------------------- |
 | `crawler_config.py` | DB、代理、图片路径（第2节） |
-| `xxx_spider.py` | 你新建的爬虫文件 |
+| `xxx_spider.py`     | 你新建的爬虫文件            |
 
 ### 禁止修改的文件（框架代码）
 
-| 文件 | 说明 |
-|------|------|
-| `common_db.py` | 数据库操作函数（`save_news_article`、`save_social_post` 等） |
-| `proxy_config.py` | 代理配置模块 |
-| `content_utils.py` | HTML 内容清洗工具 |
+| 文件                 | 说明                                                             |
+| -------------------- | ---------------------------------------------------------------- |
+| `common_db.py`     | 数据库操作函数（`save_news_article`、`save_social_post` 等） |
+| `proxy_config.py`  | 代理配置模块                                                     |
+| `content_utils.py` | HTML 内容清洗工具                                                |
 
 ### 参考文件（复制为模板或学习）
 
-| 文件 | 说明 |
-|------|------|
-| `template_news_spider.py` | **新闻类爬虫模板**，RSS/HTML 新闻站复制此文件 |
-| `template_social_spider.py` | **社媒类爬虫模板**，社交媒体平台复制此文件 |
-| `hrw_spider.py` | 新闻爬虫案例（HRW，使用 Playwright） |
-| `bluesky_spider.py` | 社媒爬虫案例（Bluesky，使用 atproto） |
+| 文件                          | 说明                                                |
+| ----------------------------- | --------------------------------------------------- |
+| `template_news_spider.py`   | **新闻类爬虫模板**，RSS/HTML 新闻站复制此文件 |
+| `template_social_spider.py` | **社媒类爬虫模板**，社交媒体平台复制此文件    |
+| `hrw_spider.py`             | 新闻爬虫案例（HRW，使用 Playwright）                |
+| `bluesky_spider.py`         | 社媒爬虫案例（Bluesky，使用 atproto）               |
 
 ---
 
@@ -123,23 +124,20 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
 `sentiment_tables.sql` 包含建库建表脚本，开发者需要在本地 MySQL 执行：
 
 ```bash
-# 方式一：命令行导入
-mysql -u root -p < sentiment_tables.sql
-
-# 方式二：进入 MySQL 后用 source 命令（推荐）
+# 进入 MySQL 后用 source 命令（推荐）
 mysql -u root -p
 > source sentiment_tables.sql;
 ```
 
 **6张表说明：**
 
-| 表名 | 用途 | 爬虫角色 |
-|------|------|----------|
-| `crawl_config` | 爬取配置 | 读取（系统自动管理） |
-| `crawl_log` | 爬取日志 | 通过 `--log-id` 回写状态 |
-| `news_article` | 新闻文章 | **写入**（新闻类爬虫） |
-| `social_post` | 社交帖子 | **写入**（社媒类爬虫） |
-| `social_comment` | 社交评论 | **写入**（社媒类爬虫） |
+| 表名                  | 用途     | 爬虫角色                     |
+| --------------------- | -------- | ---------------------------- |
+| `crawl_config`      | 爬取配置 | 读取（系统自动管理）         |
+| `crawl_log`         | 爬取日志 | 通过 `--log-id` 回写状态   |
+| `news_article`      | 新闻文章 | **写入**（新闻类爬虫） |
+| `social_post`       | 社交帖子 | **写入**（社媒类爬虫） |
+| `social_comment`    | 社交评论 | **写入**（社媒类爬虫） |
 | `social_post_image` | 帖子图片 | **写入**（社媒类爬虫） |
 
 > 新闻爬虫只写 `news_article`；社媒爬虫写 `social_post` + `social_comment` + `social_post_image`。
@@ -181,15 +179,15 @@ ALL_KEYWORDS = ["china", "taiwan"]        # 关键词（用于搜索）
 
 **新闻模板**需要实现两个函数：
 
-| 函数 | 职责 | 返回值 |
-|------|------|--------|
-| `fetch_article_list(session, max_pages)` | 从列表页收集文章链接 | `[{"title": str, "url": str}, ...]` |
-| `fetch_article_detail(session, url, title)` | 解析单篇文章详情 | `{"title", "url", "date", "keywords", "content", "cover_image", "source"}` 或 `None` |
+| 函数                                          | 职责                 | 返回值                                                                                   |
+| --------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `fetch_article_list(session, max_pages)`    | 从列表页收集文章链接 | `[{"title": str, "url": str}, ...]`                                                    |
+| `fetch_article_detail(session, url, title)` | 解析单篇文章详情     | `{"title", "url", "date", "keywords", "content", "cover_image", "source"}` 或 `None` |
 
 **社媒模板**需要实现一个函数：
 
-| 函数 | 职责 | 返回值 |
-|------|------|--------|
+| 函数                                 | 职责                     | 返回值         |
+| ------------------------------------ | ------------------------ | -------------- |
 | `search_posts(keyword, max_count)` | 搜索帖子并返回结构化数据 | 见下方数据结构 |
 
 `search_posts` 返回结构：
@@ -230,23 +228,26 @@ python bbc_spider.py --max 3
 return items_found, items_new, items_updated
 ```
 
-| 含义 | 说明 |
-|------|------|
-| `items_found` | 爬虫发现的总条数（经过过滤前） |
-| `items_new` | 新插入数据库的条数 |
-| `items_updated` | 更新已有记录的条数 |
+| 含义              | 说明                           |
+| ----------------- | ------------------------------ |
+| `items_found`   | 爬虫发现的总条数（经过过滤前） |
+| `items_new`     | 新插入数据库的条数             |
+| `items_updated` | 更新已有记录的条数             |
 
 ### 保存函数（common_db.py 提供）
 
 **新闻类：**
+
 ```python
 save_news_article(cursor, article_data)  # → (is_new, is_updated)
 ```
+
 - `article_data` 必须包含：`title`, `url`, `date`（或 `publish_date`）, `content`
 - 可选：`keywords`, `cover_image`, `source`
 - 基于 `url` 唯一索引去重（`ON DUPLICATE KEY UPDATE`）
 
 **社媒类：**
+
 ```python
 save_social_post(cursor, post_data)      # → (is_new, is_updated)
 save_social_comment(cursor, comment_data)  # → 无返回值
@@ -277,12 +278,12 @@ finally:
 
 所有爬虫统一支持以下参数：
 
-| 参数 | 说明 | 开发者常用 |
-|------|------|-----------|
-| `--max N` | 最多爬取/保存 N 条 | ✅ 手动测试用 |
-| `--keyword XXX` | 只搜索指定关键词 | ✅ 手动测试用 |
-| `--config-id N` | 配置表的 ID | ❌ 系统调度时自动传入 |
-| `--log-id N` | 日志表的 ID | ❌ 系统调度时自动传入 |
+| 参数              | 说明               | 开发者常用            |
+| ----------------- | ------------------ | --------------------- |
+| `--max N`       | 最多爬取/保存 N 条 | ✅ 手动测试用         |
+| `--keyword XXX` | 只搜索指定关键词   | ✅ 手动测试用         |
+| `--config-id N` | 配置表的 ID        | ❌ 系统调度时自动传入 |
+| `--log-id N`    | 日志表的 ID        | ❌ 系统调度时自动传入 |
 
 **开发者手动测试只需关注 `--max` 和 `--keyword`：**
 
@@ -302,8 +303,9 @@ python my_spider.py --keyword taiwan --max 5   # 只搜 taiwan，最多 5 条
 ```bash
 cd crawlers/
 
-# 确保 MySQL 建好表
-mysql -u root -p ry-vue < sentiment_tables.sql
+# 确保 MySQL 建好表（如果还没执行过）
+mysql -u root -p
+> source sentiment_tables.sql;
 
 # 确保代理在跑（Clash Verge 端口 7890）
 
@@ -387,6 +389,7 @@ HRW（Human Rights Watch）爬虫，展示了完整的新闻爬虫实现：
 - 关键词过滤、图片下载、日期提取
 
 **适合参考的点：**
+
 - Playwright 启动和页面导航
 - 列表页文章链接提取逻辑
 - 详情页正文提取（使用 `content_utils.clean_content_html`）
@@ -402,6 +405,7 @@ Bluesky 社交平台爬虫，展示了完整的社媒爬虫实现：
 - 递归解析评论树
 
 **适合参考的点：**
+
 - 社媒 API 对接方式
 - 帖子 + 评论的一并保存
 - 图片下载和 `social_post_image` 表写入

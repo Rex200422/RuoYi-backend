@@ -36,14 +36,14 @@ from atproto import Client
 import pymysql
 import time
 import requests
-from common_db import save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
+from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
+from crawler_config import DB, IMAGE_DIR
 
 
 # ============================================================
 # 配置常量
 # ============================================================
 
-DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 # Bluesky 登录凭证（优先从环境变量读取）
 BSKY_USERNAME = os.environ.get("BSKY_USERNAME", "zao-17.bsky.social")
 BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD", "3ORI6-VJAFI")
@@ -57,19 +57,10 @@ DEFAULT_MAX_PER_KW = 2                     # 每个关键词最多保存的帖�
 DEPTH = 3                                   # 评论线程递归深度（3层 = 主帖 + 2层回复）
 
 
-# 图片存储目录（Linux 生产环境路径）
-IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
-
 
 # ============================================================
 # 数据库工具
 # ============================================================
-
-def get_db():
-    """获取数据库连接"""
-    return pymysql.connect(**DB_CONFIG)
-
-
 # ============================================================
 # 评论保存
 # ============================================================
