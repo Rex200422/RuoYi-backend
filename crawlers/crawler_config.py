@@ -48,7 +48,9 @@ PLAYWRIGHT_PROXY = {"server": PROXY}  # Playwright浏览器代理配置
 # ============================================================
 # Windows 开发环境：当前目录下 _images 文件夹
 # Linux 生产环境：/home/ruoyi/uploadPath/sentiment/images
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")  # 图片存储目录
+# 开发环境: os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
+# 生产环境: /home/ruoyi/uploadPath/sentiment/images
+IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"  # 图片存储目录
 
 # ============================================================
 # 爬虫默认参数
