@@ -17,18 +17,12 @@ from datetime import datetime, timedelta
 
 import pymysql
 import requests
+from crawler_config import DB
+from common_db import get_db
 
 # ============================================================
 # 配置
 # ============================================================
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "200422",
-    "database": "ry-vue",
-    "charset": "utf8mb4",
-}
-
 OLLAMA_BASE = "http://200m.frpee.com:18138"
 MODEL_NAME = "qwen3.6:latest"
 
@@ -43,11 +37,6 @@ MAX_CONTENT_LEN = 150  # 新闻内容截取前 N 字（精简）
 MAX_COMMENTS = 30      # 最多取多少条评论（按点赞排序，热门优先）
 ESTIMATED_TOKEN_PER_CHAR = 1.5  # 中文约 1.5 token/字符（粗估）
 MAX_INPUT_TOKENS = 28000        # 上下文 token 上限（模型32k，留4k缓冲）
-
-
-def get_db():
-    """获取数据库连接"""
-    return pymysql.connect(**DB_CONFIG)
 
 
 # ============================================================

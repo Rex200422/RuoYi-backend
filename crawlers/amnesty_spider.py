@@ -3,12 +3,12 @@ Amnesty International News Spider - Playwright
 """
 import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
-import pymysql
+from crawler_config import DB
 from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
-from common_db import save_news_article, update_crawl_log_start, update_crawl_log, update_crawl_log_error, update_config_last_crawl
+from common_db import get_db, save_news_article, update_crawl_log_start, update_crawl_log, update_crawl_log_error, update_config_last_crawl
 
 IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
 
@@ -37,7 +37,6 @@ def download_image(url, article_id, idx=0):
 
 
 
-DB_CONFIG = {"host": "localhost", "user": "root", "password": "200422", "database": "ry-vue", "charset": "utf8mb4"}
 SITE_NAME = "Amnesty"
 BASE_URL = "https://www.amnesty.org"
 DEFAULT_MAX_PAGES = 2
@@ -48,7 +47,6 @@ SUB_KEYWORDS = ["trade", "technology", "military", "sanctions", "indo-pacific", 
                 "semiconductor", "cyber", "beijing", "human rights", "xinjiang", "hong kong",
                 "uyghur", "tibet", "ccp"]
 
-def get_db(): return pymysql.connect(**DB_CONFIG)
 def clean(text): return re.sub(r"\s+", " ", text).strip() if text else ""
 
 def extract_keywords(text):
