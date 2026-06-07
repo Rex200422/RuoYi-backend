@@ -2,15 +2,14 @@
 Amnesty International News Spider - Playwright
 """
 import os, sys, re, time, random, argparse
+from crawler_config import DB, IMAGE_DIR
 from playwright.sync_api import sync_playwright
-from crawler_config import DB
 from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
 from common_db import get_db, save_news_article, update_crawl_log_start, update_crawl_log, update_crawl_log_error, update_config_last_crawl
 
-IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
 
 def download_image(url, article_id, idx=0):
     """下载图片到本地，返回本地文件名"""

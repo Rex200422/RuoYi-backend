@@ -19,8 +19,8 @@ Windows 开发环境：
   search_posts() → 搜索帖子
     → save_posts() → 下载图片、保存帖子和评论到数据库
 """
-import os, sys, re, time, random, argparse, hashlib, uuid
-import requests
+import os, sys, re, time, random, argparse, hashlib, uuid  # 基础库：文件操作、正则、时间、随机、参数解析、哈希、UUID
+import requests  # HTTP请求库
 
 # ============================================================
 # 导入统一配置和工具模块
@@ -39,7 +39,7 @@ from common_db import (
 # 站点配置 — 创建新爬虫时只需修改这里
 # ============================================================
 SITE_NAME = "YourSite"                       # 站点名（写入 social_post.site_name 字段）
-ALL_KEYWORDS = ["china", "taiwan"]
+ALL_KEYWORDS = ["china", "taiwan"]           # 关键词列表，用于搜索帖子
 
 
 # ============================================================
@@ -56,7 +56,7 @@ def clean(text):
     返回值:
         str: 替换所有连续空白为单个空格后的文本
     """
-    return re.sub(r"\s+", " ", text).strip() if text else ""
+    return re.sub(r"\s+", " ", text).strip() if text else ""  # \s+ 匹配一个或多个空白字符
 
 
 def extract_keywords(text):
@@ -72,10 +72,10 @@ def extract_keywords(text):
     返回值:
         str: 逗号分隔的关键词，如 "china,taiwan"
     """
-    t = text.lower()
+    t = text.lower()  # 转小写以便统一匹配
     return ",".join(sorted(set(
         k for k in ALL_KEYWORDS
-        if re.search(rf"\b{re.escape(k)}\b", t)
+        if re.search(rf"\b{re.escape(k)}\b", t)  # \b 匹配单词边界，re.escape 避免关键词含特殊字符
     )))
 
 
@@ -102,8 +102,8 @@ def download_image(url, post_id, idx=0):
     """
     if not url:
         return ""
-    post_hash = hashlib.md5(post_id.encode()).hexdigest()[:16]
-    filename = f"{post_hash}_{idx}.jpg"
+    post_hash = hashlib.md5(post_id.encode()).hexdigest()[:16]  # MD5哈希前16位作为文件名前缀
+    filename = f"{post_hash}_{idx}.jpg"  # 文件名格式：哈希_序号.jpg
     local_path = os.path.join(IMAGE_DIR, filename)
     if os.path.exists(local_path):
         return os.path.relpath(local_path, os.path.dirname(IMAGE_DIR)).replace("\\", "/")
@@ -153,7 +153,7 @@ def search_posts(keyword, max_count):
                 - "like_count" (int): 评论点赞数
                 - "comment_time" (str): 评论时间
     """
-    posts = []
+    posts = []  # 存储搜索到的帖子列表
     # ===== 在此实现搜索逻辑 =====
     return posts
 
@@ -183,28 +183,28 @@ def save_posts(posts, keyword):
             - items_new: 新增的帖子数
             - items_updated: 更新的帖子数
     """
-    items_found = items_new = items_updated = 0
+    items_found = items_new = items_updated = 0  # 统计计数器
 
     for post in posts:
-        items_found += 1
-        post_id = post["post_id"]
+        items_found += 1  # 增加发现计数
+        post_id = post["post_id"]  # 帖子唯一ID
 
-        conn = get_db()
-        cur = conn.cursor()
+        conn = get_db()  # 获取数据库连接
+        cur = conn.cursor()  # 创建游标
         try:
             # 下载图片
-            image_path = ""
-            if post.get("image_urls"):
-                image_path = download_image(post["image_urls"][0], post_id, 0)
-                for idx, img_url in enumerate(post["image_urls"]):
-                    local = download_image(img_url, post_id, idx)
-                    if local:
-                        cur.execute(
+            image_path = ""  # 主图路径
+            if post.get("image_urls"):  # 如果有图片
+                image_path = download_image(post["image_urls"][0], post_id, 0)  # 下载主图
+                for idx, img_url in enumerate(post["image_urls"]):  # 下载所有图片
+                    local = download_image(img_url, post_id, idx)  # 下载图片到本地
+                    if local:  # 下载成功则保存记录
+                        cur.execute(  # 插入图片记录
                             "INSERT INTO social_post_image (post_id, image_url, local_path, idx) "
                             "VALUES (%s, %s, %s, %s)", (post_id, img_url, local, idx))
 
             # 保存帖子
-            post_data = {
+            post_data = {  # 构建帖子数据
                 "uuid": str(uuid.uuid4()), "site_name": SITE_NAME,
                 "post_id": post_id, "trigger_keyword": keyword,
                 "title": post.get("title", ""),
@@ -216,17 +216,17 @@ def save_posts(posts, keyword):
                 "original_url": post.get("original_url", ""),
                 "image_url": image_path,
             }
-            is_new, is_updated = save_social_post(cur, post_data)
-            if is_new:
+            is_new, is_updated = save_social_post(cur, post_data)  # 保存帖子
+            if is_new:  # 新增帖子
                 items_new += 1
                 print(f"    [NEW] {post.get('author', '?')}: {post.get('content', '')[:50]}")
-            elif is_updated:
+            elif is_updated:  # 更新帖子
                 items_updated += 1
                 print(f"    [UPDATE] {post_id[:30]}")
 
             # 保存评论
-            for c in post.get("comments", []):
-                save_social_comment(cur, {
+            for c in post.get("comments", []):  # 遍历评论
+                save_social_comment(cur, {  # 保存评论
                     "post_id": post_id,
                     "title": post.get("title", ""),
                     "comment_id": c["comment_id"],
@@ -236,11 +236,11 @@ def save_posts(posts, keyword):
                     "comment_time": c.get("comment_time", ""),
                 })
 
-            conn.commit()
+            conn.commit()  # 提交事务
         finally:
-            cur.close()
-            conn.close()
-        time.sleep(random.uniform(*REQUEST_DELAY))
+            cur.close()  # 关闭游标
+            conn.close()  # 关闭连接
+        time.sleep(random.uniform(*REQUEST_DELAY))  # 随机延迟，防止被封IP
 
     return items_found, items_new, items_updated
 
@@ -274,13 +274,13 @@ def crawl(keywords, max_per_kw):
     print(f"  {SITE_NAME} Spider  keywords={keywords}  max={max_per_kw}")
     print(f"{'='*50}")
 
-    total_found = total_new = total_updated = 0
+    total_found = total_new = total_updated = 0  # 统计计数器
 
-    for kw in keywords:
+    for kw in keywords:  # 遍历每个关键词
         print(f"\n--- 搜索: {kw} ---")
-        posts = search_posts(kw, max_per_kw * 3)[:max_per_kw]
-        found, new, updated = save_posts(posts, kw)
-        total_found += found
+        posts = search_posts(kw, max_per_kw * 3)[:max_per_kw]  # 多搜一些用于过滤，取前max_per_kw条
+        found, new, updated = save_posts(posts, kw)  # 保存帖子
+        total_found += found  # 累加统计
         total_new += new
         total_updated += updated
         print(f"  {kw}: found={found} new={new} updated={updated}")
@@ -327,17 +327,17 @@ def main():
       5. 成功时更新日志和配置
       6. 失败时记录错误信息
     """
-    args = parse_args()
-    keywords = [args.keyword] if args.keyword else ALL_KEYWORDS
-    max_per_kw = args.max or MAX_PER_KEYWORD
+    args = parse_args()  # 解析命令行参数
+    keywords = [args.keyword] if args.keyword else ALL_KEYWORDS  # 确定关键词列表
+    max_per_kw = args.max or MAX_PER_KEYWORD  # 每个关键词最多爬取数
 
-    update_crawl_log_start(args.log_id)
+    update_crawl_log_start(args.log_id)  # 记录开始时间
     try:
-        found, new, updated = crawl(keywords, max_per_kw)
-        update_crawl_log(args.log_id, found, new, updated)
-        update_config_last_crawl(args.config_id)
+        found, new, updated = crawl(keywords, max_per_kw)  # 执行爬虫
+        update_crawl_log(args.log_id, found, new, updated)  # 更新日志
+        update_config_last_crawl(args.config_id)  # 更新配置
     except Exception as e:
-        update_crawl_log_error(args.log_id, str(e))
+        update_crawl_log_error(args.log_id, str(e))  # 记录错误
         raise
 
 

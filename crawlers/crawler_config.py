@@ -22,12 +22,12 @@ import os
 # 连接本地 MySQL/MariaDB，所有爬虫共用此配置。
 # charset=utf8mb4 确保支持中文和 emoji 字符。
 DB = {
-    "host":     "127.0.0.1",           # 数据库地址
+    "host":     "127.0.0.1",           # 数据库地址，本地默认
     "user":     "root",                # 数据库用户名
     "password": "200422",              # 数据库密码（请勿公开）
     "database": "ry-vue",              # 数据库名（RuoYi 默认库名）
     "charset":  "utf8mb4",             # 字符集，支持中文和emoji
-}
+}  # 数据库连接配置，所有爬虫共用
 
 # ============================================================
 # 代理地址（只连本地代理端口）
@@ -35,20 +35,20 @@ DB = {
 # Windows: 使用 Clash Verge → http://127.0.0.1:7890
 # Linux:   使用 gost       → socks5://127.0.0.1:1080
 # 如果不需要代理，可将此值设为 None
-PROXY = "http://127.0.0.1:7890"
+PROXY = "http://127.0.0.1:7890"  # 代理地址，Windows用Clash Verge，Linux用gost
 
 # 以下由 PROXY 自动生成，不用改
 # requests 库使用的代理格式: {"http": "http://...", "https": "http://..."}
-PROXIES = {"http": PROXY, "https": PROXY}
+PROXIES = {"http": PROXY, "https": PROXY}  # requests库代理配置
 # Playwright 浏览器使用的代理格式: {"server": "http://..."}
-PLAYWRIGHT_PROXY = {"server": PROXY}
+PLAYWRIGHT_PROXY = {"server": PROXY}  # Playwright浏览器代理配置
 
 # ============================================================
 # 图片存储路径
 # ============================================================
 # Windows 开发环境：当前目录下 _images 文件夹
 # Linux 生产环境：/home/ruoyi/uploadPath/sentiment/images
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
+IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")  # 图片存储目录
 
 # ============================================================
 # 爬虫默认参数
@@ -64,14 +64,14 @@ REQUEST_DELAY   = (1, 3)   # 请求间隔随机范围（秒），防止被封IP
 # ============================================================
 # Bluesky API 登录凭证，用于 Bluesky 爬虫。
 # 密码被拆分拼接，避免被简单扫描。
-BSKY_USERNAME = "zao-17.bsky.social"
-BSKY_PASSWORD = "3ORI" + "6-VJAFI"
+BSKY_USERNAME = "zao-17.bsky.social"  # Bluesky用户名
+BSKY_PASSWORD = "3ORI" + "6-VJAFI"  # Bluesky密码（拆分拼接，避免被简单扫描）
 
 # ============================================================
 # User-Agent
 # ============================================================
 # 模拟 Chrome 浏览器，避免被网站识别为爬虫。
 USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "  # Mac OS X系统
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"  # Chrome浏览器
 )

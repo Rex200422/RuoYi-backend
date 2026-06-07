@@ -48,3 +48,6 @@ nbdist/
 
 /.vscode/
 __pycache__/
+
+# 爬虫下载的图片文件
+crawlers/_images/

@@ -21,9 +21,9 @@ Windows 开发环境：
       → 关键词过滤
         → save_news_article() → 保存到数据库
 """
-import os, sys, re, time, random, argparse, hashlib
-import requests
-from bs4 import BeautifulSoup
+import os, sys, re, time, random, argparse, hashlib  # 基础库：文件操作、正则、时间、随机、参数解析、哈希
+import requests  # HTTP请求库
+from bs4 import BeautifulSoup  # HTML解析库
 
 # ============================================================
 # 导入统一配置和工具模块
@@ -45,7 +45,7 @@ from common_db import (
 # ============================================================
 SITE_NAME = "YourSite"                       # 站点名（写入 news_article.source 字段）
 BASE_URL = "https://example.com/news"        # 列表页URL（爬虫从这里开始）
-KEYWORDS = ["china", "taiwan"]
+KEYWORDS = ["china", "taiwan"]               # 关键词列表，用于过滤文章
 IMAGE_DIR = IMAGE_DIR                        # 图片目录（从 crawler_config 自动切换，一般无需修改）
 
 
@@ -63,7 +63,7 @@ def clean(text):
     返回值:
         str: 替换所有连续空白为单个空格后的文本
     """
-    return re.sub(r"\s+", " ", text).strip() if text else ""
+    return re.sub(r"\s+", " ", text).strip() if text else ""  # \s+ 匹配一个或多个空白字符
 
 
 def extract_keywords(text):
@@ -79,10 +79,10 @@ def extract_keywords(text):
     返回值:
         str: 逗号分隔的关键词，如 "china,taiwan"
     """
-    t = text.lower()
+    t = text.lower()  # 转小写以便统一匹配
     return ",".join(sorted(set(
         k for k in KEYWORDS
-        if re.search(rf"\b{re.escape(k)}\b", t)
+        if re.search(rf"\b{re.escape(k)}\b", t)  # \b 匹配单词边界，re.escape 避免关键词含特殊字符
     )))
 
 
@@ -96,8 +96,8 @@ def contains_main_keyword(text):
     返回值:
         bool: 如果文本中包含任意一个 KEYWORDS 中的关键词则返回 True
     """
-    t = text.lower()
-    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in KEYWORDS)
+    t = text.lower()  # 转小写以便统一匹配
+    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in KEYWORDS)  # \b 匹配单词边界
 
 
 # ===== 已写好，通常不需要修改 =====
@@ -123,8 +123,8 @@ def download_image(url, identifier, idx=0):
     """
     if not url:
         return ""
-    id_hash = hashlib.md5(identifier.encode()).hexdigest()[:16]
-    filename = f"{id_hash}_{idx}.jpg"
+    id_hash = hashlib.md5(identifier.encode()).hexdigest()[:16]  # MD5哈希前16位作为文件名前缀
+    filename = f"{id_hash}_{idx}.jpg"  # 文件名格式：哈希_序号.jpg
     local_path = os.path.join(IMAGE_DIR, filename)
     if os.path.exists(local_path):
         # 返回相对于 uploadPath 的路径
@@ -162,24 +162,24 @@ def fetch_article_list(session, max_pages):
             - "title" (str): 文章标题
             - "url" (str): 文章详情页URL
     """
-    articles = []
-    visited = set()
+    articles = []  # 存储收集到的文章列表
+    visited = set()  # 已访问的URL集合，用于去重
 
     for page_num in range(1, max_pages + 1):
-        url = BASE_URL if page_num == 1 else f"{BASE_URL}?page={page_num}"
+        url = BASE_URL if page_num == 1 else f"{BASE_URL}?page={page_num}"  # 第一页不需要分页参数
         print(f"  [LIST] Page {page_num}: {url}")
         try:
-            resp = session.get(url, headers=HEADERS, proxies=PROXIES, timeout=30)
-            soup = BeautifulSoup(resp.text, "html.parser")
+            resp = session.get(url, headers=HEADERS, proxies=PROXIES, timeout=30)  # 发送请求
+            soup = BeautifulSoup(resp.text, "html.parser")  # 解析HTML
 
             # ===== 根据站点结构调整选择器 =====
             # 以下是常见的文章链接选择器，需要根据目标站点的HTML结构调整
-            for a_tag in soup.select("article a[href], .post-title a, h2 a"):
-                href = a_tag.get("href", "").strip()
-                title = clean(a_tag.get_text())
-                if not href or len(title) < 10:
+            for a_tag in soup.select("article a[href], .post-title a, h2 a"):  # 常见文章链接选择器
+                href = a_tag.get("href", "").strip()  # 获取链接
+                title = clean(a_tag.get_text())  # 获取标题并清理空白
+                if not href or len(title) < 10:  # 过滤无效链接和过短标题
                     continue
-                if href.startswith("/"):
+                if href.startswith("/"):  # 相对路径转绝对路径
                     href = BASE_URL.rstrip("/") + href
                 if href not in visited:
                     visited.add(href)
@@ -220,35 +220,35 @@ def fetch_article_detail(session, url, title):
         如果正文太短或获取失败，返回 None
     """
     try:
-        resp = session.get(url, headers=HEADERS, proxies=PROXIES, timeout=30, verify=False)
-        soup = BeautifulSoup(resp.text, "html.parser")
+        resp = session.get(url, headers=HEADERS, proxies=PROXIES, timeout=30, verify=False)  # 发送请求，verify=False禁用SSL验证
+        soup = BeautifulSoup(resp.text, "html.parser")  # 解析HTML
 
-        h1 = soup.find("h1")
+        h1 = soup.find("h1")  # 尝试从h1标签获取标题
         if h1:
-            title = clean(h1.get_text())
+            title = clean(h1.get_text())  # 清理标题空白
 
-        date = ""
-        time_tag = soup.find("time")
+        date = ""  # 日期字符串
+        time_tag = soup.find("time")  # 尝试从time标签获取日期
         if time_tag:
-            date = time_tag.get("datetime") or clean(time_tag.get_text())
+            date = time_tag.get("datetime") or clean(time_tag.get_text())  # 优先使用datetime属性
 
-        content = ""
-        article_tag = soup.find("article") or soup.find("div", class_="entry-content")
+        content = ""  # 文章正文
+        article_tag = soup.find("article") or soup.find("div", class_="entry-content")  # 定位正文容器
         if article_tag:
-            content = clean_content_html(str(article_tag))
-        if not content or len(content) < 100:
+            content = clean_content_html(str(article_tag))  # 清洗HTML内容
+        if not content or len(content) < 100:  # 正文太短时尝试从meta标签获取摘要
             meta = soup.find("meta", attrs={"name": "description"})
             if meta and meta.get("content"):
-                content = remove_boilerplate_text(meta["content"])
-        if not content or len(content) < 100:
+                content = remove_boilerplate_text(meta["content"])  # 清理模板文字
+        if not content or len(content) < 100:  # 仍然太短则跳过
             print(f"    [SKIP] 正文太短")
             return None
 
-        cover_url = ""
-        og_img = soup.find("meta", property="og:image")
+        cover_url = ""  # 封面图URL
+        og_img = soup.find("meta", property="og:image")  # 从Open Graph标签获取封面图
         if og_img and og_img.get("content"):
             cover_url = og_img["content"]
-        cover_path = download_image(cover_url, url) if cover_url else ""
+        cover_path = download_image(cover_url, url) if cover_url else ""  # 下载封面图
 
         return {
             "title": title, "url": url, "date": date,
@@ -292,41 +292,41 @@ def crawl(max_articles, max_pages, keyword=None):
     print(f"{'='*50}")
 
     session = requests.Session()
-    items_found = items_new = items_updated = 0
+    items_found = items_new = items_updated = 0  # 统计计数器
 
     article_list = fetch_article_list(session, max_pages)
     print(f"\n  收集到 {len(article_list)} 篇文章\n")
 
     for i, art in enumerate(article_list):
-        if (items_new + items_updated) >= max_articles:
+        if (items_new + items_updated) >= max_articles:  # 达到最大文章数则停止
             break
-        print(f"  [{i+1}] {art['title'][:60]}")
+        print(f"  [{i+1}] {art['title'][:60]}")  # 打印前60个字符的标题
 
         detail = fetch_article_detail(session, art["url"], art["title"])
         if not detail:
             continue
-        if not contains_main_keyword(detail["title"] + " " + detail["content"]):
+        if not contains_main_keyword(detail["title"] + " " + detail["content"]):  # 关键词过滤
             print(f"    [SKIP] 无关键词")
             continue
 
-        items_found += 1
-        conn = get_db()
-        cur = conn.cursor()
+        items_found += 1  # 增加发现计数
+        conn = get_db()  # 获取数据库连接
+        cur = conn.cursor()  # 创建游标
         try:
-            is_new, is_updated = save_news_article(cur, detail)
-            conn.commit()
+            is_new, is_updated = save_news_article(cur, detail)  # 保存文章
+            conn.commit()  # 提交事务
             if is_new:
-                items_new += 1
+                items_new += 1  # 新增文章
                 print(f"    [NEW] +1")
             elif is_updated:
-                items_updated += 1
+                items_updated += 1  # 更新文章
                 print(f"    [UPDATE] +1")
             else:
-                print(f"    [NOCHANGE]")
+                print(f"    [NOCHANGE]")  # 内容无变化
         finally:
             cur.close()
             conn.close()
-        time.sleep(random.uniform(*REQUEST_DELAY))
+        time.sleep(random.uniform(*REQUEST_DELAY))  # 随机延迟，防止被封IP
 
     print(f"\n  Done. found={items_found} new={items_new} updated={items_updated}\n")
     return items_found, items_new, items_updated
@@ -371,21 +371,21 @@ def main():
       6. 失败时记录错误信息
     """
     global KEYWORDS
-    args = parse_args()
-    # 如果传入了 --keyword（如 "china,taiwan"），覆盖默认关键词
-    if args.keyword:
+    global KEYWORDS  # 声明使用全局变量
+    args = parse_args()  # 解析命令行参数
+    if args.keyword:  # 如果指定了关键词，覆盖默认值
         KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
-    update_crawl_log_start(args.log_id)
+    update_crawl_log_start(args.log_id)  # 记录开始时间
     try:
-        found, new, updated = crawl(
-            args.max or MAX_ARTICLES,
-            MAX_PAGES,
-            args.keyword,
+        found, new, updated = crawl(  # 执行爬虫
+            args.max or MAX_ARTICLES,  # 最大文章数
+            MAX_PAGES,  # 最大页数
+            args.keyword,  # 关键词
         )
-        update_crawl_log(args.log_id, found, new, updated)
-        update_config_last_crawl(args.config_id)
+        update_crawl_log(args.log_id, found, new, updated)  # 更新日志
+        update_config_last_crawl(args.config_id)  # 更新配置
     except Exception as e:
-        update_crawl_log_error(args.log_id, str(e))
+        update_crawl_log_error(args.log_id, str(e))  # 记录错误
         raise
 
 

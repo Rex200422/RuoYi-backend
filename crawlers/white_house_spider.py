@@ -3,14 +3,13 @@ White House News Spider - Playwright
 https://www.whitehouse.gov/news/
 """
 import os, sys, re, time, random, argparse
+from crawler_config import DB, IMAGE_DIR
 from playwright.sync_api import sync_playwright
-from crawler_config import DB
 from content_utils import extract_content_playwright, remove_boilerplate_text
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
 
-IMAGE_DIR = "/home/ruoyi/uploadPath/sentiment/images"
 SITE_NAME = "White House"
 BASE_URL = "https://www.whitehouse.gov"
 DEFAULT_MAX_PAGES = 2

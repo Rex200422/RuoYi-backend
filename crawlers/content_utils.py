@@ -18,15 +18,15 @@ Shared content extraction utilities for news spiders.
 使用方式:
     from content_utils import clean_content_html, extract_content_playwright
 """
-import re
-from bs4 import BeautifulSoup
+import re  # 正则表达式库
+from bs4 import BeautifulSoup  # HTML解析库
 
 
 # ============================================================
 # 模板文字正则（需要清理的噪音内容）
 # ============================================================
 # 这些正则匹配常见的网页噪音文本，如版权声明、分享按钮、QR码提示等。
-BOILERPLATE = [
+BOILERPLATE = [  # 模板文字正则列表，用于清理网页噪音
     r"©\s*\d{4}.*?All Rights Reserved.*",       # 版权声明: "© 2026 xxx All Rights Reserved"
     r"All Rights Reserved.*",                     # 版权声明变体
     r"Scan the QR code.*",                        # QR码扫描提示
@@ -42,7 +42,7 @@ BOILERPLATE = [
 ]
 
 # 预编译正则，提高性能。IGNORECASE 匹配大小写，MULTILINE 支持多行匹配。
-BOILERPLATE_RE = re.compile("|".join(BOILERPLATE), re.IGNORECASE | re.MULTILINE)
+BOILERPLATE_RE = re.compile("|".join(BOILERPLATE), re.IGNORECASE | re.MULTILINE)  # 预编译正则，提高匹配性能
 
 # ============================================================
 # 需要完全删除的 HTML 标签
@@ -50,13 +50,13 @@ BOILERPLATE_RE = re.compile("|".join(BOILERPLATE), re.IGNORECASE | re.MULTILINE)
 # 这些标签不包含正文内容，直接删除整个标签及其子元素。
 REMOVE_TAGS = ['script', 'style', 'nav', 'footer', 'aside', 'form', 'iframe',
                'figure', 'figcaption', 'div.share', 'div.social', '.tweet',
-               '.share-buttons', '.article-share', '.social-share']
+               '.share-buttons', '.article-share', '.social-share']  # 需要完全删除的HTML标签
 
 # ============================================================
 # 页脚类元素的 CSS 选择器（需要删除）
 # ============================================================
 # 匹配各种网站常见的页脚、分享栏、相关文章等区域。
-FOOTER_SELECTORS = [
+FOOTER_SELECTORS = [  # 页脚类元素的CSS选择器列表
     '.article-footer', '.post-footer', '.entry-footer',   # 文章页脚
     '.share-links', '.social-links', '.related-posts',     # 分享和相关链接
     '.article-tags', '.post-tags', '.article-categories', # 标签和分类
@@ -94,16 +94,16 @@ def clean_content_html(html):
     # 步骤1: 删除不包含正文的标签
     for tag_name in ['script', 'style', 'nav', 'aside', 'form', 'iframe']:
         for tag in soup.find_all(tag_name):
-            tag.decompose()
+            tag.decompose()  # 删除标签及其所有子元素
     
     # 步骤2: 根据 CSS 类名模式删除页脚类元素
-    for element in soup.find_all(True):
-        if not element.attrs:
+    for element in soup.find_all(True):  # 遍历所有HTML元素
+        if not element.attrs:  # 跳过没有属性的元素
             continue
-        classes = element.get('class', []) or []
-        if isinstance(classes, str):
+        classes = element.get('class', []) or []  # 获取CSS类列表
+        if isinstance(classes, str):  # 类名可能是字符串而非列表
             classes = [classes]
-        class_str = " ".join(classes).lower()
+        class_str = " ".join(classes).lower()  # 合并为小写字符串
         
         # 检查类名中是否包含噪音关键词
         for pattern in ['footer', 'share', 'social', 'newsletter', 'subscribe',
@@ -114,35 +114,32 @@ def clean_content_html(html):
     
     # 步骤3: 删除 <figure> 标签（通常包含图片和图片说明，非正文）
     for fig in soup.find_all('figure'):
-        fig.decompose()
+        fig.decompose()  # 删除标签及其所有子元素
     
     # 步骤4: 提取所有 <p> 标签作为段落
-    paragraphs = []
-    for p in soup.find_all('p'):
-        text = p.get_text(" ", strip=True)
-        if not text:
+    paragraphs = []  # 存储清洗后的段落
+    for p in soup.find_all('p'):  # 遍历所有<p>标签
+        text = p.get_text(" ", strip=True)  # 获取文本，用空格连接
+        if not text:  # 跳过空文本
             continue
-        # 跳过匹配模板文字正则的行
-        if BOILERPLATE_RE.search(text):
+        if BOILERPLATE_RE.search(text):  # 跳过匹配模板文字正则的行
             continue
-        # 跳过过短的文本片段（通常是元数据）
-        if len(text) < 15:
+        if len(text) < 15:  # 跳过过短的文本片段（通常是元数据）
             continue
-        # 跳过图片说明或元数据行
-        if text.startswith("Image:") or text.startswith("Photo:"):
+        if text.startswith("Image:") or text.startswith("Photo:"):  # 跳过图片说明或元数据行
             continue
-        paragraphs.append(f"<p>{text}</p>")
+        paragraphs.append(f"<p>{text}</p>")  # 包裹在<p>标签中
     
     # 步骤5: 如果没有找到 <p> 标签，回退到按行分割纯文本
-    if not paragraphs:
-        text = soup.get_text(separator="\n")
-        for line in text.split("\n"):
-            line = line.strip()
-            if not line or len(line) < 15:
+    if not paragraphs:  # 没有找到<p>标签
+        text = soup.get_text(separator="\n")  # 获取所有文本，用换行符分隔
+        for line in text.split("\n"):  # 按行分割
+            line = line.strip()  # 去除首尾空白
+            if not line or len(line) < 15:  # 跳过空行和过短行
                 continue
-            if BOILERPLATE_RE.search(line):
+            if BOILERPLATE_RE.search(line):  # 跳过模板文字
                 continue
-            paragraphs.append(f"<p>{line}</p>")
+            paragraphs.append(f"<p>{line}</p>")  # 包裹在<p>标签中
     
     return "\n".join(paragraphs)
 
@@ -162,15 +159,15 @@ def scroll_to_bottom(page):
         None
     """
     try:
-        total_height = page.evaluate("document.body.scrollHeight")
-        current = 0
-        while current < total_height:
-            current += 800
-            page.evaluate(f"window.scrollTo(0, {current})")
-            page.wait_for_timeout(400)
-        page.wait_for_timeout(2000)
+        total_height = page.evaluate("document.body.scrollHeight")  # 获取页面总高度
+        current = 0  # 当前滚动位置
+        while current < total_height:  # 逐步滚动到底部
+            current += 800  # 每次滚动800像素
+            page.evaluate(f"window.scrollTo(0, {current})")  # 执行滚动
+            page.wait_for_timeout(400)  # 等待400ms，让内容加载
+        page.wait_for_timeout(2000)  # 额外等待2秒，确保内容完全加载
     except Exception:
-        pass
+        pass  # 忽略滚动错误
 
 
 def extract_content_playwright(page, selector="article", base_url=""):
@@ -194,18 +191,18 @@ def extract_content_playwright(page, selector="article", base_url=""):
         str: 清洗后的HTML正文，如果提取失败返回空字符串
     """
     # 滚动页面触发懒加载
-    scroll_to_bottom(page)
+    scroll_to_bottom(page)  # 先滚动页面，加载懒加载内容
     
     # 依次尝试不同的选择器定位正文容器
-    for sel in ["div.entry-content", selector]:
-        container = page.locator(sel)
-        if container.count() > 0:
-            html = container.first.inner_html()
-            result = clean_content_html(html)
-            if result and len(result) > 100:
+    for sel in ["div.entry-content", selector]:  # 先尝试entry-content，再尝试指定选择器
+        container = page.locator(sel)  # 定位元素
+        if container.count() > 0:  # 如果找到元素
+            html = container.first.inner_html()  # 获取innerHTML
+            result = clean_content_html(html)  # 清洗HTML
+            if result and len(result) > 100:  # 内容足够长则返回
                 return result
     
-    return ""
+    return ""  # 所有选择器都失败，返回空字符串
 
 
 def remove_boilerplate_text(text):
@@ -227,41 +224,41 @@ def remove_boilerplate_text(text):
              长文本返回多个段落。
     """
     # 删除模板文字行
-    lines = text.split("\n")
-    cleaned = []
+    lines = text.split("\n")  # 按行分割
+    cleaned = []  # 存储清洗后的行
     for line in lines:
-        line = line.strip()
-        if not line:
+        line = line.strip()  # 去除首尾空白
+        if not line:  # 跳过空行
             continue
-        if len(line) < 10:
+        if len(line) < 10:  # 跳过过短行
             continue
-        if BOILERPLATE_RE.search(line):
+        if BOILERPLATE_RE.search(line):  # 跳过模板文字
             continue
-        cleaned.append(line)
+        cleaned.append(line)  # 添加到清洗后的列表
     
-    text = " ".join(cleaned)
-    if not text:
+    text = " ".join(cleaned)  # 合并为一段文本
+    if not text:  # 如果为空则返回
         return ""
     
     # 如果文本较长且没有换行符，按句子边界智能分割
-    if len(text) > 200:
+    if len(text) > 200:  # 文本较长，需要分段
         # 在双空格或句号/问号/感叹号后接大写字母处分割
-        import re as _re
-        sentences = _re.split(r'\s{2,}|(?<=[.!?])\s+(?=[A-Z])', text)
-        paragraphs = []
-        current = ""
-        for s in sentences:
-            s = s.strip()
-            if not s:
+        import re as _re  # 延迟导入，避免顶部重复
+        sentences = _re.split(r'\s{2,}|(?<=[.!?])\s+(?=[A-Z])', text)  # 按句子边界分割
+        paragraphs = []  # 存储分段后的段落
+        current = ""  # 当前段落内容
+        for s in sentences:  # 遍历每个句子
+            s = s.strip()  # 去除首尾空白
+            if not s:  # 跳过空句子
                 continue
-            if len(current) + len(s) > 300:
-                if current:
+            if len(current) + len(s) > 300:  # 当前段落超过300字符则分割
+                if current:  # 保存当前段落
                     paragraphs.append(f"<p>{current.strip()}</p>")
-                current = s
-            else:
+                current = s  # 开始新段落
+            else:  # 否则合并到当前段落
                 current += " " + s if current else s
-        if current:
+        if current:  # 保存最后一个段落
             paragraphs.append(f"<p>{current.strip()}</p>")
-        return "\n".join(paragraphs)
+        return "\n".join(paragraphs)  # 返回多个段落
     else:
-        return f"<p>{text}</p>"
+        return f"<p>{text}</p>"  # 短文本返回单个段落

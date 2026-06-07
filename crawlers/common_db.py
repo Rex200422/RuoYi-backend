@@ -57,8 +57,8 @@ def clean(text):
         str: 将所有连续空白替换为单个空格后的文本，
              如果输入为空则返回空字符串。
     """
-    import re
-    return re.sub(r"\s+", " ", text).strip() if text else ""
+    import re  # 延迟导入，避免循环依赖
+    return re.sub(r"\s+", " ", text).strip() if text else ""  # \s+ 匹配一个或多个空白字符
 
 
 # ============================================================
@@ -100,17 +100,17 @@ def save_news_article(cursor, article):
         publish_date=VALUES(publish_date),
         keywords=VALUES(keywords),
         cover_image=VALUES(cover_image),
-        content=VALUES(content)"""
+        content=VALUES(content)"""  # 插入或更新新闻文章，基于url去重
     cursor.execute(sql, (
         article["title"],
         article["url"],
-        article.get("publish_date", article.get("date", "")),
+        article.get("publish_date", article.get("date", "")),  # 兼容publish_date和date字段
         article.get("keywords", ""),
         article.get("cover_image", ""),
         article.get("content", ""),
         article.get("source", ""),
     ))
-    rc = cursor.rowcount
+    rc = cursor.rowcount  # rowcount=1表示插入，2表示更新
     return rc == 1, rc == 2
 
 
@@ -158,7 +158,7 @@ def save_social_post(cursor, post):
         comment_count=VALUES(comment_count),
         title=VALUES(title),
         content=VALUES(content),
-        image_url=VALUES(image_url)"""
+        image_url=VALUES(image_url)"""  # 插入或更新社交帖子，基于post_id去重
     cursor.execute(sql, (
         post["uuid"],
         post["site_name"],
@@ -174,7 +174,7 @@ def save_social_post(cursor, post):
         post.get("original_url", ""),
         post.get("image_url", ""),
     ))
-    rc = cursor.rowcount
+    rc = cursor.rowcount  # rowcount=1表示插入，2表示更新
     return rc == 1, rc == 2
 
 
@@ -211,7 +211,7 @@ def save_social_comment(cursor, comment):
     VALUES (%s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         like_count=VALUES(like_count),
-        comment_content=VALUES(comment_content)"""
+        comment_content=VALUES(comment_content)"""  # 插入或更新评论，基于comment_id去重
     cursor.execute(sql, (
         comment["post_id"],
         comment.get("title", ""),
@@ -221,7 +221,7 @@ def save_social_comment(cursor, comment):
         comment.get("like_count", 0),
         comment.get("comment_time", ""),
     ))
-    rc = cursor.rowcount
+    rc = cursor.rowcount  # rowcount=1表示插入，2表示更新
     return rc == 1, rc == 2
 
 
@@ -248,7 +248,7 @@ def save_social_post_image(cursor, image):
         bool: 是否成功插入（rowcount == 1）
     """
     sql = """INSERT INTO social_post_image (post_id, image_url, local_path, idx)
-    VALUES (%s, %s, %s, %s)"""
+    VALUES (%s, %s, %s, %s)"""  # 插入图片记录，不做去重检查
     cursor.execute(sql, (
         image["post_id"],
         image.get("image_url", ""),
@@ -272,16 +272,16 @@ def update_crawl_log_start(log_id):
     参数:
         log_id (int or None): crawl_log 表的记录ID，由调度系统传入
     """
-    if not log_id:
+    if not log_id:  # log_id为None时跳过
         return
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db()  # 获取数据库连接
+    cur = conn.cursor()  # 创建游标
     try:
-        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))
-        conn.commit()
+        cur.execute("UPDATE crawl_log SET start_time=NOW() WHERE id=%s", (log_id,))  # 记录开始时间
+        conn.commit()  # 提交事务
     finally:
-        cur.close()
-        conn.close()
+        cur.close()  # 关闭游标
+        conn.close()  # 关闭连接
 
 
 def update_crawl_log(log_id, items_found, items_new, items_updated):
@@ -294,22 +294,22 @@ def update_crawl_log(log_id, items_found, items_new, items_updated):
         items_new (int): 新增的记录数
         items_updated (int): 更新的记录数
     """
-    if not log_id:
+    if not log_id:  # log_id为None时跳过
         return
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db()  # 获取数据库连接
+    cur = conn.cursor()  # 创建游标
     try:
-        cur.execute(
+        cur.execute(  # 更新日志：状态为success，记录统计数据
             """UPDATE crawl_log
                SET status='success', end_time=NOW(),
                    items_found=%s, items_new=%s, items_updated=%s
                WHERE id=%s""",
             (items_found, items_new, items_updated, log_id),
         )
-        conn.commit()
+        conn.commit()  # 提交事务
     finally:
-        cur.close()
-        conn.close()
+        cur.close()  # 关闭游标
+        conn.close()  # 关闭连接
 
 
 def update_crawl_log_error(log_id, error_msg):
@@ -320,19 +320,19 @@ def update_crawl_log_error(log_id, error_msg):
         log_id (int or None): crawl_log 表的记录ID
         error_msg (str): 错误信息，超过2000字符会被截断
     """
-    if not log_id:
+    if not log_id:  # log_id为None时跳过
         return
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db()  # 获取数据库连接
+    cur = conn.cursor()  # 创建游标
     try:
-        cur.execute(
+        cur.execute(  # 更新日志：状态为failed，记录错误信息
             "UPDATE crawl_log SET status='failed', end_time=NOW(), error_msg=%s WHERE id=%s",
-            (str(error_msg)[:2000], log_id),
+            (str(error_msg)[:2000], log_id),  # 错误信息截断为2000字符
         )
-        conn.commit()
+        conn.commit()  # 提交事务
     finally:
-        cur.close()
-        conn.close()
+        cur.close()  # 关闭游标
+        conn.close()  # 关闭连接
 
 
 def update_config_last_crawl(config_id):
@@ -344,13 +344,13 @@ def update_config_last_crawl(config_id):
     参数:
         config_id (int or None): crawl_config 表的记录ID
     """
-    if not config_id:
+    if not config_id:  # config_id为None时跳过
         return
-    conn = get_db()
-    cur = conn.cursor()
+    conn = get_db()  # 获取数据库连接
+    cur = conn.cursor()  # 创建游标
     try:
-        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))
-        conn.commit()
+        cur.execute("UPDATE crawl_config SET last_crawl_time=NOW() WHERE id=%s", (config_id,))  # 更新最后爬取时间
+        conn.commit()  # 提交事务
     finally:
-        cur.close()
-        conn.close()
+        cur.close()  # 关闭游标
+        conn.close()  # 关闭连接
