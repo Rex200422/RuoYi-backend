@@ -35,7 +35,7 @@ DB = {
 # Windows: 使用 Clash Verge → http://127.0.0.1:7890
 # Linux:   使用 gost       → socks5://127.0.0.1:1080
 # 如果不需要代理，可将此值设为 None
-PROXY = "http://192.168.0.14:7890"
+PROXY = "http://127.0.0.1:7890"
 
 # 以下由 PROXY 自动生成，不用改
 # requests 库使用的代理格式: {"http": "http://...", "https": "http://..."}
