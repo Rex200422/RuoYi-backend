@@ -1,28 +1,16 @@
 """
 RuoYi 舆情爬虫 - 共享数据库模块
 所有爬虫共用的数据库连接、保存函数和日志更新函数。
-所有 save 函数通过 cursor.rowcount 判断操作类型：
-  rowcount=1 → INSERT 新增
-  rowcount=2 → UPDATE 更新（ON DUPLICATE KEY UPDATE 命中）
-  rowcount=0 → 值未变化（既非新增也更新）
+
+数据库配置统一从 crawler_config.py 读取。
 """
 import pymysql
-
-# ============================================================
-# 数据库配置
-# ============================================================
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "200422",
-    "database": "ry-vue",
-    "charset": "utf8mb4",
-}
+from crawler_config import DB
 
 
 def get_db():
     """获取数据库连接"""
-    return pymysql.connect(**DB_CONFIG)
+    return pymysql.connect(**DB)
 
 
 def clean(text):
@@ -41,9 +29,6 @@ def save_news_article(cursor, article):
     :param cursor: 已有的数据库 cursor
     :param article: dict，包含 title, url, publish_date, keywords, cover_image, content, source
     :return: (is_new: bool, is_updated: bool)
-        - is_new=True  : 新增了一条记录 (rowcount=1)
-        - is_updated=True: 更新了已有记录 (rowcount=2)
-        - 都为 False   : 值未变化 (rowcount=0)
     """
     sql = """INSERT INTO news_article (title, url, publish_date, keywords, cover_image, content, source)
     VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -73,10 +58,6 @@ def save_social_post(cursor, post):
     """
     保存社交帖子到 social_post 表。
     基于 post_id 唯一索引去重。
-    :param cursor: 已有的数据库 cursor
-    :param post: dict，包含 uuid, site_name, trigger_keyword, source_board, post_id,
-                 title, author, publish_time, like_count, comment_count, content,
-                 original_url, image_url
     :return: (is_new: bool, is_updated: bool)
     """
     sql = """INSERT INTO social_post
@@ -116,9 +97,6 @@ def save_social_comment(cursor, comment):
     """
     保存评论到 social_comment 表。
     基于 comment_id 唯一索引去重。
-    :param cursor: 已有的数据库 cursor
-    :param comment: dict，包含 post_id, title, comment_id, commenter,
-                    comment_content, like_count, comment_time
     :return: (is_new: bool, is_updated: bool)
     """
     sql = """INSERT INTO social_comment
@@ -141,7 +119,28 @@ def save_social_comment(cursor, comment):
 
 
 # ============================================================
-# 爬取日志更新（独立连接版本，适合在爬取开始/结束时调用）
+# 帖子图片保存
+# ============================================================
+def save_social_post_image(cursor, image):
+    """
+    保存帖子图片到 social_post_image 表。
+    :param cursor: 已有的数据库 cursor
+    :param image: dict，包含 post_id, image_url, local_path, idx
+    :return: is_new: bool
+    """
+    sql = """INSERT INTO social_post_image (post_id, image_url, local_path, idx)
+    VALUES (%s, %s, %s, %s)"""
+    cursor.execute(sql, (
+        image["post_id"],
+        image.get("image_url", ""),
+        image.get("local_path", ""),
+        image.get("idx", 0),
+    ))
+    return cursor.rowcount == 1
+
+
+# ============================================================
+# 爬取日志更新（独立连接版本）
 # ============================================================
 def update_crawl_log_start(log_id):
     """更新爬取日志：记录开始时间"""
@@ -158,13 +157,7 @@ def update_crawl_log_start(log_id):
 
 
 def update_crawl_log(log_id, items_found, items_new, items_updated):
-    """
-    更新爬取日志：成功完成。
-    :param log_id: crawl_log 表的主键 ID
-    :param items_found: 爬取发现的总条目数
-    :param items_new: 新增条目数（INSERT rowcount=1 的累计）
-    :param items_updated: 更新条目数（UPDATE rowcount=2 的累计）
-    """
+    """更新爬取日志：成功完成。"""
     if not log_id:
         return
     conn = get_db()
