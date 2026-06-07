@@ -280,7 +280,7 @@ def crawl(max_articles, max_pages, keyword=None):
     参数:
         max_articles (int): 最多保存的文章数
         max_pages (int): 最多遍历的列表页数
-        keyword (str or None): 指定关键词（当前模板未使用，预留）
+        keyword (str or None): 指定关键词（逗号分隔），覆盖模板默认的 KEYWORDS
 
     返回值:
         tuple: (items_found, items_new, items_updated)
@@ -365,12 +365,17 @@ def main():
 
     这是爬虫的入口点，负责：
       1. 解析命令行参数
-      2. 更新爬取日志的开始时间
-      3. 执行爬虫主流程
-      4. 成功时更新日志和配置
-      5. 失败时记录错误信息
+      2. 如果传入了 --keyword，覆盖模板默认关键词列表
+      3. 更新爬取日志的开始时间
+      4. 执行爬虫主流程
+      5. 成功时更新日志和配置
+      6. 失败时记录错误信息
     """
+    global KEYWORDS
     args = parse_args()
+    # 如果传入了 --keyword（如 "china,taiwan"），覆盖默认关键词
+    if args.keyword:
+        KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
     update_crawl_log_start(args.log_id)
     try:
         found, new, updated = crawl(
