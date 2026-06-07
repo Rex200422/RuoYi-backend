@@ -21,7 +21,6 @@ Windows 开发环境：
 """
 import os, sys, re, time, random, argparse, hashlib, uuid
 import requests
-import pymysql
 
 # ============================================================
 # 导入统一配置和工具模块
@@ -29,7 +28,7 @@ import pymysql
 from crawler_config import DB, IMAGE_DIR, MAX_PER_KEYWORD, REQUEST_DELAY
 from proxy_config import PROXIES
 from common_db import (
-    save_social_post, save_social_comment, save_social_post_image,
+    get_db, save_social_post, save_social_comment, save_social_post_image,
     update_crawl_log, update_crawl_log_error,
     update_config_last_crawl, update_crawl_log_start,
 )
@@ -190,7 +189,7 @@ def save_posts(posts, keyword):
         items_found += 1
         post_id = post["post_id"]
 
-        conn = pymysql.connect(**DB)
+        conn = get_db()
         cur = conn.cursor()
         try:
             # 下载图片

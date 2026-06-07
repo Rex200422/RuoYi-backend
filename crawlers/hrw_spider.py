@@ -22,7 +22,6 @@ HRW (Human Rights Watch) 新闻爬虫 - Playwright 版
 """
 import os, sys, re, time, random, argparse
 from playwright.sync_api import sync_playwright
-import pymysql
 from content_utils import extract_content_playwright, remove_boilerplate_text
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB, IMAGE_DIR

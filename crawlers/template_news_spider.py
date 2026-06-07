@@ -24,7 +24,6 @@ Windows 开发环境：
 import os, sys, re, time, random, argparse, hashlib
 import requests
 from bs4 import BeautifulSoup
-import pymysql
 
 # ============================================================
 # 导入统一配置和工具模块
@@ -34,7 +33,7 @@ from proxy_config import PROXIES
 HEADERS = {"User-Agent": USER_AGENT}
 from content_utils import clean_content_html, remove_boilerplate_text
 from common_db import (
-    save_news_article,
+    get_db, save_news_article,
     update_crawl_log, update_crawl_log_error,
     update_config_last_crawl, update_crawl_log_start,
 )
@@ -311,7 +310,7 @@ def crawl(max_articles, max_pages, keyword=None):
             continue
 
         items_found += 1
-        conn = pymysql.connect(**DB)
+        conn = get_db()
         cur = conn.cursor()
         try:
             is_new, is_updated = save_news_article(cur, detail)

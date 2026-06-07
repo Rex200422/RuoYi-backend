@@ -15,7 +15,6 @@ from content_utils import clean_content_html
 
 import requests
 from bs4 import BeautifulSoup
-import pymysql
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB, USER_AGENT
 from common_db import get_db

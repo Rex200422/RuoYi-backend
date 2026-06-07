@@ -33,7 +33,6 @@ os.environ["HTTP_PROXY"] = PROXIES["http"]
 os.environ["HTTPS_PROXY"] = PROXIES["https"]
 
 from atproto import Client
-import pymysql
 import time
 import requests
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start

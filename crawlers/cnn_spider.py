@@ -3,7 +3,6 @@ CNN 报刊杂志新闻爬虫 v2 - 保留HTML格式
 """
 import os, sys, re, time, random, argparse, requests
 from bs4 import BeautifulSoup
-import pymysql
 from content_utils import clean_content_html
 from proxy_config import PROXIES
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
