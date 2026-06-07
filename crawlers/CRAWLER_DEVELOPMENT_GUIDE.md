@@ -35,13 +35,18 @@ cd crawlers/
 pip install pymysql requests beautifulsoup4 lxml
 
 # 4) 如需 Playwright 爬虫（如 hrw_spider），额外安装：
+#    临时设置代理加速下载
+$env:HTTPS_PROXY="http://127.0.0.1:7890"
+$env:HTTP_PROXY="http://127.0.0.1:7890"
 pip install playwright
 playwright install chromium
 
 # 5) 代理：本地运行 Clash Verge，确保系统代理端口为 7890
 #    crawler_config.py 中 PROXY 默认已设为 http://127.0.0.1:7890
 
-# 6) MySQL：本地安装或连接远程 MySQL 5.7+，执行建表脚本（见第4节）
+# 6) MySQL：连接远程 MySQL 5.7+，执行建表脚本（见第4节）
+#    远程地址：192.168.122.95，密码：200422
+#    需要在 crawler_config.py 中配置 DB.host 为远程地址
 ```
 
 **验证环境：**
@@ -58,11 +63,11 @@ python -c "from playwright.sync_api import sync_playwright; print('Playwright OK
 **`crawler_config.py`** 是唯一的配置文件，开发者**必须**修改以下三项：
 
 ```python
-# 数据库连接 —— 改成你本地/远程 MySQL 地址
+# 数据库连接 —— 默认连接服务器远程 MySQL
 DB = {
-    "host":     "localhost",
+    "host":     "192.168.122.95",      # 远程 MySQL 地址
     "user":     "root",
-    "password": "你的密码",
+    "password": "***",
     "database": "ry-vue",
     "charset":  "utf8mb4",
 }

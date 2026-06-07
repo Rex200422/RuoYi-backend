@@ -22,7 +22,7 @@ import os
 # 连接本地 MySQL/MariaDB，所有爬虫共用此配置。
 # charset=utf8mb4 确保支持中文和 emoji 字符。
 DB = {
-    "host":     "localhost",           # 数据库地址
+    "host":     "192.168.122.95",           # 数据库地址
     "user":     "root",                # 数据库用户名
     "password": "200422",              # 数据库密码（请勿公开）
     "database": "ry-vue",              # 数据库名（RuoYi 默认库名）
