@@ -4,7 +4,7 @@
 -- 使用：mysql -u root -p < sentiment_tables.sql
 -- ============================================================
 
--- 爬取配置表（Java调度器自动管理，爬虫不直接操作）
+-- 爬取配置表（系统调度器自动管理，爬虫不直接操作）
 CREATE TABLE IF NOT EXISTS `crawl_config` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `site_name` varchar(100) NOT NULL COMMENT '站点名',

@@ -1,61 +1,76 @@
 """
 RuoYi 舆情爬虫 - 统一配置文件
-所有配置集中在这里，改这里就行。
+================================
+
+功能概述：
+    所有爬虫的配置集中在这里，修改此文件即可统一调整行为。
+    包括：数据库连接、代理设置、存储路径、默认参数、关键词等。
+
+使用方式：
+
+注意：
+    - DB 配置中的密码请勿提交到公开仓库
+    - PROXY 需要根据实际环境修改
+    - 以下配置会自动生成 PROXIES 和 PLAYWRIGHT_PROXY，无需手动设置
 """
 import os
 
+
 # ============================================================
-# 数据库
+# 数据库配置
 # ============================================================
+# 连接本地 MySQL/MariaDB，所有爬虫共用此配置。
+# charset=utf8mb4 确保支持中文和 emoji 字符。
 DB = {
-    "host":     "localhost",
-    "user":     "root",
-    "password": "200422",
-    "database": "ry-vue",
-    "charset":  "utf8mb4",
+    "host":     "localhost",           # 数据库地址
+    "user":     "root",                # 数据库用户名
+    "password": "200422",              # 数据库密码（请勿公开）
+    "database": "ry-vue",              # 数据库名（RuoYi 默认库名）
+    "charset":  "utf8mb4",             # 字符集，支持中文和emoji
 }
 
 # ============================================================
 # 代理地址（只连本地代理端口）
-# Windows 用 Clash Verge → http://127.0.0.1:7890
-# Linux   用 gost       → socks5://127.0.0.1:1080
 # ============================================================
+# Windows: 使用 Clash Verge → http://127.0.0.1:7890
+# Linux:   使用 gost       → socks5://127.0.0.1:1080
+# 如果不需要代理，可将此值设为 None
 PROXY = "http://127.0.0.1:7890"
 
 # 以下由 PROXY 自动生成，不用改
+# requests 库使用的代理格式: {"http": "http://...", "https": "http://..."}
 PROXIES = {"http": PROXY, "https": PROXY}
+# Playwright 浏览器使用的代理格式: {"server": "http://..."}
 PLAYWRIGHT_PROXY = {"server": PROXY}
 
 # ============================================================
 # 图片存储路径
-# Windows: 当前目录下 _images 文件夹
-# Linux:   /home/ruoyi/uploadPath/sentiment/images
 # ============================================================
+# Windows 开发环境：当前目录下 _images 文件夹
+# Linux 生产环境：/home/ruoyi/uploadPath/sentiment/images
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
 
 # ============================================================
 # 爬虫默认参数
 # ============================================================
-MAX_ARTICLES    = 10
-MAX_PAGES       = 3
-MAX_PER_KEYWORD = 2
-REQUEST_TIMEOUT = 30
-REQUEST_DELAY   = (1, 3)
-
-# ============================================================
-# 关键词
-# ============================================================
-MAIN_KEYWORDS = ["china", "taiwan"]
+MAX_ARTICLES    = 10       # 每次爬取的最大文章数（新闻爬虫）
+MAX_PAGES       = 3        # 每次爬取的最大列表页数（新闻爬虫）
+MAX_PER_KEYWORD = 2        # 每个关键词最多爬取的帖子数（社交爬虫）
+REQUEST_TIMEOUT = 30       # HTTP 请求超时时间（秒）
+REQUEST_DELAY   = (1, 3)   # 请求间隔随机范围（秒），防止被封IP
 
 # ============================================================
 # Bluesky 凭证
 # ============================================================
+# Bluesky API 登录凭证，用于 Bluesky 爬虫。
+# 密码被拆分拼接，避免被简单扫描。
 BSKY_USERNAME = "zao-17.bsky.social"
 BSKY_PASSWORD = "3ORI" + "6-VJAFI"
 
 # ============================================================
 # User-Agent
 # ============================================================
+# 模拟 Chrome 浏览器，避免被网站识别为爬虫。
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"

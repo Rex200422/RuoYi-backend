@@ -1,22 +1,32 @@
 """
 社媒爬虫模板（帖子+评论）
-基于 RuoYi 舆情系统爬虫开发范式
+=====================================
 
-使用：
-  cp template_social_spider.py your_site_spider.py
-  然后修改 # 配置区 和 search_posts()
+基于 RuoYi 舆情系统爬虫开发范式。
 
-Windows 开发：
+使用方法：
+  1. cp template_social_spider.py your_site_spider.py
+  2. 修改 # 配置区 的站点信息
+  3. 实现 search_posts() 中的搜索逻辑
+  4. 运行测试: python your_site_spider.py --max 3
+
+Windows 开发环境：
   1. 确保 crawler_config.py 中 DB 配置正确
   2. pip install pymysql requests
   3. python your_site_spider.py --max 3
+
+爬虫流程：
+  search_posts() → 搜索帖子
+    → save_posts() → 下载图片、保存帖子和评论到数据库
 """
 import os, sys, re, time, random, argparse, hashlib, uuid
 import requests
 import pymysql
 
-# 统一配置
-from crawler_config import DB, IMAGE_DIR, MAIN_KEYWORDS, MAX_PER_KEYWORD, REQUEST_DELAY
+# ============================================================
+# 导入统一配置和工具模块
+# ============================================================
+from crawler_config import DB, IMAGE_DIR, MAX_PER_KEYWORD, REQUEST_DELAY
 from proxy_config import PROXIES
 from common_db import (
     save_social_post, save_social_comment, save_social_post_image,
@@ -24,18 +34,45 @@ from common_db import (
     update_config_last_crawl, update_crawl_log_start,
 )
 
-# ============================================================
-# 配置区
-# ============================================================
-SITE_NAME = "YourSite"
-ALL_KEYWORDS = MAIN_KEYWORDS
 
+# ===== 配置区：需要根据目标站点修改 =====
+# ============================================================
+# 站点配置 — 创建新爬虫时只需修改这里
+# ============================================================
+SITE_NAME = "YourSite"                       # 站点名（写入 social_post.site_name 字段）
+ALL_KEYWORDS = ["china", "taiwan"]
+
+
+# ============================================================
+# 工具函数
+# ============================================================
 
 def clean(text):
+    """
+    清理文本中的多余空白字符。
+
+    参数:
+        text (str): 待清理的文本
+
+    返回值:
+        str: 替换所有连续空白为单个空格后的文本
+    """
     return re.sub(r"\s+", " ", text).strip() if text else ""
 
 
 def extract_keywords(text):
+    """
+    从文本中提取匹配的关键词。
+
+    扫描文本，找出所有在 ALL_KEYWORDS 列表中出现的关键词，
+    返回逗号分隔的去重排序结果。
+
+    参数:
+        text (str): 待匹配的文本（会转为小写匹配）
+
+    返回值:
+        str: 逗号分隔的关键词，如 "china,taiwan"
+    """
     t = text.lower()
     return ",".join(sorted(set(
         k for k in ALL_KEYWORDS
@@ -43,7 +80,27 @@ def extract_keywords(text):
     )))
 
 
+# ===== 已写好，通常不需要修改 =====
+# ============================================================
+# 图片下载函数
+# ============================================================
+
 def download_image(url, post_id, idx=0):
+    """
+    下载图片到本地目录。
+
+    根据 post_id 生成唯一的本地文件名（MD5哈希前16位）。
+    如果文件已存在则跳过下载。
+
+    参数:
+        url (str): 图片的远程URL
+        post_id (str): 帖子ID（用于生成唯一文件名）
+        idx (int): 同一帖子内多张图片的序号，从0开始
+
+    返回值:
+        str: 相对于 uploadPath 的本地文件路径
+             下载失败返回空字符串
+    """
     if not url:
         return ""
     post_hash = hashlib.md5(post_id.encode()).hexdigest()[:16]
@@ -63,38 +120,70 @@ def download_image(url, post_id, idx=0):
         return ""
 
 
+# ===== 需要开发：实现数据提取逻辑 =====
 # ============================================================
 # 搜索帖子 — 【在此实现】
 # ============================================================
+
 def search_posts(keyword, max_count):
     """
-    返回: [
-        {
-            "post_id": str,         # 帖子唯一ID（必填）
-            "title": str,           # 标题/摘要（前200字）
-            "author": str,          # 作者
-            "content": str,         # 完整内容
-            "publish_time": str,    # "YYYY-MM-DD HH:MM:SS"
-            "like_count": int,
-            "comment_count": int,
-            "original_url": str,
-            "image_urls": list,     # 图片URL列表
-            "comments": [           # 评论列表
-                {"comment_id": str, "commenter": str, "comment_content": str,
-                 "like_count": int, "comment_time": str}
-            ]
-        }
-    ]
+    根据关键词搜索帖子并返回结果。
+
+    这是需要根据目标站点实现的核心函数。
+    需要搜索网站、提取帖子列表，并获取评论。
+
+    参数:
+        keyword (str): 搜索关键词
+        max_count (int): 最多返回的帖子数
+
+    返回值:
+        list[dict]: 帖子列表，每个元素包含以下字段:
+            - "post_id" (str): 帖子唯一ID（必填，用于去重）
+            - "title" (str): 标题/摘要（建议前200字）
+            - "author" (str): 作者
+            - "content" (str): 完整内容
+            - "publish_time" (str): 发布时间，格式 "YYYY-MM-DD HH:MM:SS"
+            - "like_count" (int): 点赞数
+            - "comment_count" (int): 评论数
+            - "original_url" (str): 帖子原始链接
+            - "image_urls" (list[str]): 图片URL列表
+            - "comments" (list[dict]): 评论列表，每个元素包含:
+                - "comment_id" (str): 评论唯一ID
+                - "commenter" (str): 评论者
+                - "comment_content" (str): 评论内容
+                - "like_count" (int): 评论点赞数
+                - "comment_time" (str): 评论时间
     """
     posts = []
     # ===== 在此实现搜索逻辑 =====
     return posts
 
 
+# ===== 已写好，通常不需要修改 =====
 # ============================================================
 # 入库逻辑
 # ============================================================
+
 def save_posts(posts, keyword):
+    """
+    将搜索到的帖子保存到数据库。
+
+    处理流程：
+      1. 下载帖子图片到本地
+      2. 将帖子信息保存到 social_post 表
+      3. 将评论保存到 social_comment 表
+      4. 将图片记录保存到 social_post_image 表
+
+    参数:
+        posts (list[dict]): search_posts() 返回的帖子列表
+        keyword (str): 搜索时使用的关键词
+
+    返回值:
+        tuple: (items_found, items_new, items_updated)
+            - items_found: 处理的帖子总数
+            - items_new: 新增的帖子数
+            - items_updated: 更新的帖子数
+    """
     items_found = items_new = items_updated = 0
 
     for post in posts:
@@ -104,7 +193,7 @@ def save_posts(posts, keyword):
         conn = pymysql.connect(**DB)
         cur = conn.cursor()
         try:
-            # 图片
+            # 下载图片
             image_path = ""
             if post.get("image_urls"):
                 image_path = download_image(post["image_urls"][0], post_id, 0)
@@ -115,7 +204,7 @@ def save_posts(posts, keyword):
                             "INSERT INTO social_post_image (post_id, image_url, local_path, idx) "
                             "VALUES (%s, %s, %s, %s)", (post_id, img_url, local, idx))
 
-            # 帖子
+            # 保存帖子
             post_data = {
                 "uuid": str(uuid.uuid4()), "site_name": SITE_NAME,
                 "post_id": post_id, "trigger_keyword": keyword,
@@ -136,7 +225,7 @@ def save_posts(posts, keyword):
                 items_updated += 1
                 print(f"    [UPDATE] {post_id[:30]}")
 
-            # 评论
+            # 保存评论
             for c in post.get("comments", []):
                 save_social_comment(cur, {
                     "post_id": post_id,
@@ -157,10 +246,31 @@ def save_posts(posts, keyword):
     return items_found, items_new, items_updated
 
 
+# ===== 已写好，通常不需要修改 =====
 # ============================================================
 # 主流程
 # ============================================================
+
 def crawl(keywords, max_per_kw):
+    """
+    爬虫主流程：按关键词搜索 → 保存帖子。
+
+    流程说明：
+      1. 遍历每个关键词
+      2. 调用 search_posts() 搜索帖子（多搜一些用于过滤）
+      3. 取前 max_per_kw 条帖子
+      4. 调用 save_posts() 保存到数据库
+
+    参数:
+        keywords (list[str]): 关键词列表
+        max_per_kw (int): 每个关键词最多保存的帖子数
+
+    返回值:
+        tuple: (total_found, total_new, total_updated)
+            - total_found: 所有关键词发现的帖子总数
+            - total_new: 新增的帖子数
+            - total_updated: 更新的帖子数
+    """
     print(f"\n{'='*50}")
     print(f"  {SITE_NAME} Spider  keywords={keywords}  max={max_per_kw}")
     print(f"{'='*50}")
@@ -180,10 +290,24 @@ def crawl(keywords, max_per_kw):
     return total_found, total_new, total_updated
 
 
+# ===== 已写好，通常不需要修改 =====
 # ============================================================
-# 入口
+# 命令行入口
 # ============================================================
+
 def parse_args():
+    """
+    解析命令行参数。
+
+    参数说明:
+        --config-id: 爬取配置ID（由调度系统传入）
+        --keyword:   指定关键词（覆盖默认关键词列表）
+        --max:       每个关键词最多爬取的帖子数（覆盖默认值 MAX_PER_KEYWORD）
+        --log-id:    爬取日志ID（由调度系统传入，用于更新日志）
+
+    返回值:
+        argparse.Namespace: 解析后的参数对象
+    """
     parser = argparse.ArgumentParser(description=f"{SITE_NAME} Spider")
     parser.add_argument("--config-id", type=int, default=None)
     parser.add_argument("--keyword", type=str, default=None)
@@ -193,6 +317,17 @@ def parse_args():
 
 
 def main():
+    """
+    主函数：解析参数 → 执行爬虫 → 更新日志。
+
+    这是爬虫的入口点，负责：
+      1. 解析命令行参数
+      2. 确定关键词列表（--keyword 指定单个关键词，否则使用 ALL_KEYWORDS）
+      3. 更新爬取日志的开始时间
+      4. 执行爬虫主流程
+      5. 成功时更新日志和配置
+      6. 失败时记录错误信息
+    """
     args = parse_args()
     keywords = [args.keyword] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max or MAX_PER_KEYWORD

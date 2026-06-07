@@ -1,23 +1,35 @@
 """
 [RSS/HTML] 新闻爬虫模板
-基于 RuoYi 舆情系统爬虫开发范式
+=====================================
 
-使用：
-  cp template_news_spider.py your_site_spider.py
-  然后修改 # 配置区 和 fetch_article_list / fetch_article_detail
+基于 RuoYi 舆情系统爬虫开发范式。
 
-Windows 开发：
+使用方法：
+  1. cp template_news_spider.py your_site_spider.py
+  2. 修改 # 配置区 的站点信息
+  3. 实现 fetch_article_list() 和 fetch_article_detail() 中的数据提取逻辑
+  4. 运行测试: python your_site_spider.py --max 3
+
+Windows 开发环境：
   1. 确保 crawler_config.py 中 DB 配置正确
   2. pip install pymysql requests beautifulsoup4 lxml
   3. python your_site_spider.py --max 3
+
+爬虫流程：
+  fetch_article_list() → 收集文章链接
+    → fetch_article_detail() → 获取每篇文章详情
+      → 关键词过滤
+        → save_news_article() → 保存到数据库
 """
 import os, sys, re, time, random, argparse, hashlib
 import requests
 from bs4 import BeautifulSoup
 import pymysql
 
-# 统一配置（跨平台路径、数据库、代理）
-from crawler_config import DB, IMAGE_DIR, MAIN_KEYWORDS, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT
+# ============================================================
+# 导入统一配置和工具模块
+# ============================================================
+from crawler_config import DB, IMAGE_DIR, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT
 from proxy_config import PROXIES
 HEADERS = {"User-Agent": USER_AGENT}
 from content_utils import clean_content_html, remove_boilerplate_text
@@ -27,23 +39,47 @@ from common_db import (
     update_config_last_crawl, update_crawl_log_start,
 )
 
+
+# ===== 配置区：需要根据目标站点修改 =====
 # ============================================================
-# 配置区 — 只需修改这里
+# 站点配置 — 创建新爬虫时只需修改这里
 # ============================================================
-SITE_NAME = "YourSite"                       # 站点名（写入 news_article.source）
-BASE_URL = "https://example.com/news"        # 列表页URL
-KEYWORDS = MAIN_KEYWORDS                     # 关键词列表（从 crawler_config 继承）
-IMAGE_DIR = IMAGE_DIR                        # 图片目录（从 crawler_config 自动切换）
+SITE_NAME = "YourSite"                       # 站点名（写入 news_article.source 字段）
+BASE_URL = "https://example.com/news"        # 列表页URL（爬虫从这里开始）
+KEYWORDS = ["china", "taiwan"]
+IMAGE_DIR = IMAGE_DIR                        # 图片目录（从 crawler_config 自动切换，一般无需修改）
 
 
 # ============================================================
 # 工具函数
 # ============================================================
+
 def clean(text):
+    """
+    清理文本中的多余空白字符。
+
+    参数:
+        text (str): 待清理的文本
+
+    返回值:
+        str: 替换所有连续空白为单个空格后的文本
+    """
     return re.sub(r"\s+", " ", text).strip() if text else ""
 
 
 def extract_keywords(text):
+    """
+    从文本中提取匹配的关键词。
+
+    扫描文本，找出所有在 KEYWORDS 列表中出现的关键词，
+    返回逗号分隔的去重排序结果。
+
+    参数:
+        text (str): 待匹配的文本（会转为小写匹配）
+
+    返回值:
+        str: 逗号分隔的关键词，如 "china,taiwan"
+    """
     t = text.lower()
     return ",".join(sorted(set(
         k for k in KEYWORDS
@@ -52,11 +88,40 @@ def extract_keywords(text):
 
 
 def contains_main_keyword(text):
+    """
+    检查文本是否包含主关键词。
+
+    参数:
+        text (str): 待检查的文本（会转为小写匹配）
+
+    返回值:
+        bool: 如果文本中包含任意一个 KEYWORDS 中的关键词则返回 True
+    """
     t = text.lower()
     return any(re.search(rf"\b{re.escape(k)}\b", t) for k in KEYWORDS)
 
 
+# ===== 已写好，通常不需要修改 =====
+# ============================================================
+# 图片下载函数
+# ============================================================
+
 def download_image(url, identifier, idx=0):
+    """
+    下载图片到本地目录。
+
+    根据 identifier（通常是文章URL）生成唯一的本地文件名（MD5哈希前16位）。
+    如果文件已存在则跳过下载。
+
+    参数:
+        url (str): 图片的远程URL
+        identifier (str): 标识符（用于生成唯一文件名，通常是文章URL）
+        idx (int): 同一文章内多张图片的序号，从0开始
+
+    返回值:
+        str: 相对于 uploadPath 的本地文件路径，如 "sentiment/images/abc123_0.jpg"
+             下载失败返回空字符串
+    """
     if not url:
         return ""
     id_hash = hashlib.md5(identifier.encode()).hexdigest()[:16]
@@ -77,13 +142,26 @@ def download_image(url, identifier, idx=0):
         return ""
 
 
+# ===== 需要开发：实现数据提取逻辑 =====
 # ============================================================
 # 列表页解析 — 【在此实现】
 # ============================================================
+
 def fetch_article_list(session, max_pages):
     """
     从列表页收集文章链接。
-    返回: [{"title": str, "url": str}, ...]
+
+    遍历列表页的多个页面，提取每篇文章的标题和URL。
+    使用 requests.Session 保持 Cookie。
+
+    参数:
+        session: requests.Session 对象（保持连接和Cookie）
+        max_pages (int): 最多遍历的列表页数
+
+    返回值:
+        list[dict]: 文章列表，每个元素包含:
+            - "title" (str): 文章标题
+            - "url" (str): 文章详情页URL
     """
     articles = []
     visited = set()
@@ -96,6 +174,7 @@ def fetch_article_list(session, max_pages):
             soup = BeautifulSoup(resp.text, "html.parser")
 
             # ===== 根据站点结构调整选择器 =====
+            # 以下是常见的文章链接选择器，需要根据目标站点的HTML结构调整
             for a_tag in soup.select("article a[href], .post-title a, h2 a"):
                 href = a_tag.get("href", "").strip()
                 title = clean(a_tag.get_text())
@@ -113,10 +192,34 @@ def fetch_article_list(session, max_pages):
     return articles
 
 
+# ===== 需要开发：实现数据提取逻辑 =====
 # ============================================================
 # 文章详情解析 — 【在此实现】
 # ============================================================
+
 def fetch_article_detail(session, url, title):
+    """
+    获取文章详情页的内容。
+
+    访问文章URL，提取标题、日期、正文、封面图等信息。
+    使用 content_utils 中的清洗函数处理正文HTML。
+
+    参数:
+        session: requests.Session 对象
+        url (str): 文章详情页URL
+        title (str): 从列表页获取的标题（备用）
+
+    返回值:
+        dict: 文章数据，包含以下字段:
+            - "title" (str): 文章标题
+            - "url" (str): 文章URL
+            - "date" (str): 发布日期
+            - "keywords" (str): 逗号分隔的关键词
+            - "content" (str): 清洗后的HTML正文
+            - "cover_image" (str): 封面图本地路径
+            - "source" (str): 来源站点名
+        如果正文太短或获取失败，返回 None
+    """
     try:
         resp = session.get(url, headers=HEADERS, proxies=PROXIES, timeout=30, verify=False)
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -158,10 +261,33 @@ def fetch_article_detail(session, url, title):
         return None
 
 
+# ===== 已写好，通常不需要修改 =====
 # ============================================================
 # 主流程
 # ============================================================
+
 def crawl(max_articles, max_pages, keyword=None):
+    """
+    爬虫主流程：列表页 → 详情页 → 关键词过滤 → 入库。
+
+    流程说明：
+      1. 调用 fetch_article_list() 收集文章链接
+      2. 逐个访问文章详情页
+      3. 过滤不含关键词的文章
+      4. 调用 save_news_article() 保存到数据库
+      5. 记录统计信息
+
+    参数:
+        max_articles (int): 最多保存的文章数
+        max_pages (int): 最多遍历的列表页数
+        keyword (str or None): 指定关键词（当前模板未使用，预留）
+
+    返回值:
+        tuple: (items_found, items_new, items_updated)
+            - items_found: 发现并处理的文章总数
+            - items_new: 新增的文章数
+            - items_updated: 更新的文章数
+    """
     print(f"\n{'='*50}")
     print(f"  {SITE_NAME} Spider  max={max_articles}  pages={max_pages}")
     print(f"{'='*50}")
@@ -207,10 +333,24 @@ def crawl(max_articles, max_pages, keyword=None):
     return items_found, items_new, items_updated
 
 
+# ===== 已写好，通常不需要修改 =====
 # ============================================================
-# 入口
+# 命令行入口
 # ============================================================
+
 def parse_args():
+    """
+    解析命令行参数。
+
+    参数说明:
+        --config-id: 爬取配置ID（由调度系统传入）
+        --keyword:   指定关键词（覆盖默认关键词列表）
+        --max:       最多爬取的文章数（覆盖默认值 MAX_ARTICLES）
+        --log-id:    爬取日志ID（由调度系统传入，用于更新日志）
+
+    返回值:
+        argparse.Namespace: 解析后的参数对象
+    """
     parser = argparse.ArgumentParser(description=f"{SITE_NAME} Spider")
     parser.add_argument("--config-id", type=int, default=None)
     parser.add_argument("--keyword", type=str, default=None)
@@ -220,6 +360,16 @@ def parse_args():
 
 
 def main():
+    """
+    主函数：解析参数 → 执行爬虫 → 更新日志。
+
+    这是爬虫的入口点，负责：
+      1. 解析命令行参数
+      2. 更新爬取日志的开始时间
+      3. 执行爬虫主流程
+      4. 成功时更新日志和配置
+      5. 失败时记录错误信息
+    """
     args = parse_args()
     update_crawl_log_start(args.log_id)
     try:
