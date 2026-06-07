@@ -120,10 +120,15 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_images")
 
 ## 4. 数据库建表
 
-`sentiment_tables.sql` 包含 6 张表，开发者需要在本地 MySQL 执行：
+`sentiment_tables.sql` 包含建库建表脚本，开发者需要在本地 MySQL 执行：
 
 ```bash
+# 方式一：命令行导入
 mysql -u root -p < sentiment_tables.sql
+
+# 方式二：进入 MySQL 后用 source 命令（推荐）
+mysql -u root -p
+> source sentiment_tables.sql;
 ```
 
 **6张表说明：**

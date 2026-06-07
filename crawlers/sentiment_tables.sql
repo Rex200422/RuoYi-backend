@@ -1,9 +1,19 @@
 -- ============================================================
--- RuoYi 舆情爬虫 - 建表SQL
--- 用途：开发者本地建库建表，测试爬虫
--- 使用：mysql -u root -p < sentiment_tables.sql
+-- RuoYi 舆情爬虫 - 建库建表脚本
+-- 用途：开发者本地初始化MySQL环境
+-- 使用方法：
+--   mysql -u root -p
+--   然后执行以下命令：
+--   source sentiment_tables.sql
 -- ============================================================
 
+-- 1. 建库
+CREATE DATABASE IF NOT EXISTS `ry-vue` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+-- 2. 选择库
+USE `ry-vue`;
+
+-- 3. 建表
 -- 爬取配置表（系统调度器自动管理，爬虫不直接操作）
 CREATE TABLE IF NOT EXISTS `crawl_config` (
   `id` bigint NOT NULL AUTO_INCREMENT,
@@ -38,7 +48,7 @@ CREATE TABLE IF NOT EXISTS `crawl_log` (
   KEY `idx_site_time` (`site_name`,`start_time` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='爬取日志';
 
--- 新闻文章表（爬虫写入，AI简报读取）
+-- 新闻文章表（爬虫写入）
 CREATE TABLE IF NOT EXISTS `news_article` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `title` varchar(500) NOT NULL COMMENT '标题',
@@ -56,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `news_article` (
   KEY `idx_date` (`publish_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='报刊杂志文章';
 
--- 社交媒体帖子表（爬虫写入，AI简报读取）
+-- 社交媒体帖子表（爬虫写入）
 CREATE TABLE IF NOT EXISTS `social_post` (
   `uuid` varchar(100) NOT NULL COMMENT '帖子唯一标识',
   `site_name` varchar(100) NOT NULL COMMENT '网站名',
@@ -79,7 +89,7 @@ CREATE TABLE IF NOT EXISTS `social_post` (
   KEY `idx_keyword` (`trigger_keyword`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='社交媒体帖子';
 
--- 社交媒体评论表（爬虫写入，AI简报读取）
+-- 社交媒体评论表（爬虫写入）
 CREATE TABLE IF NOT EXISTS `social_comment` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `post_id` varchar(200) NOT NULL COMMENT '帖子ID',
@@ -106,10 +116,3 @@ CREATE TABLE IF NOT EXISTS `social_post_image` (
   PRIMARY KEY (`id`),
   KEY `idx_post_id` (`post_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='帖子图片';
-
--- ============================================================
--- 示例数据：预置1条配置用于测试
--- ============================================================
-INSERT INTO `crawl_config` (`site_name`, `keyword`, `interval_minutes`, `max_results`, `enabled`)
-VALUES ('YourSite', 'china,taiwan', 120, 10, 1)
-ON DUPLICATE KEY UPDATE `update_time` = NOW();
