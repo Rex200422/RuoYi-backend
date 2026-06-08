@@ -151,13 +151,14 @@ public class AiSummaryGenerator {
             String title = extractTitle(llmOutput);
             String summaryText = extractSummaryText(llmOutput);
             String riskLevel = riskFromTrend != null ? riskFromTrend : extractRisk(llmOutput);
+            String riskReason = extractRiskReason(llmOutput);
             List<String> suggestions = extractSuggestions(llmOutput);
 
             log.info("[AI Summary] Title: {}", title);
-            log.info("[AI Summary] Risk: {}", riskLevel);
+            log.info("[AI Summary] Risk: {} - {}", riskLevel, riskReason);
 
             // ---- Build structured JSON output ----
-            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, categories, stats, trends, suggestions);
+            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, riskReason, categories, stats, trends, suggestions);
 
             saveSummary(title, jsonContent, riskLevel, now, newsCount, postCount, genSeconds);
             log.info("[AI Summary] === V5 Done (structured JSON) ===");
@@ -520,6 +521,7 @@ public class AiSummaryGenerator {
          sb.append("请按以下格式输出（每项一行）：\n");
          sb.append("TITLE: 标题\n");
          sb.append("RISK: 高/中/低\n");
+         sb.append("REASON: 风险评级的具体原因（一句话）\n");
          sb.append("SUMMARY: 3-5句核心摘要\n");
          sb.append("SUGGESTION1: 建议1\n");
          sb.append("SUGGESTION2: 建议2\n");
@@ -667,6 +669,20 @@ public class AiSummaryGenerator {
         return "中";
     }
 
+    /**
+     * Extract risk reason from LLM output (REASON: line).
+     */
+    private String extractRiskReason(String content) {
+        String[] lines = content.split("\n");
+        for (String line : lines) {
+            if (line.trim().toUpperCase().startsWith("REASON:")) {
+                String reason = line.substring(line.indexOf(':') + 1).trim();
+                if (!reason.isEmpty()) return reason;
+            }
+        }
+        return "";
+    }
+
     private void saveSummary(String title, String content, String riskLevel,
                               LocalDateTime dataEnd, int newsCount, int socialCount, int genSeconds) {
         jdbc.update(
@@ -769,6 +785,16 @@ public class AiSummaryGenerator {
         Map<String, Integer> categoryCount = new LinkedHashMap<>();
         Map<String, List<String>> categoryEvents = new LinkedHashMap<>();
 
+        // Exclusion keywords — lifestyle/entertainment content not counted in statistics
+        String[] excludeKeywords = {
+            "娱乐", "明星", "综艺", "电影", "音乐", "游戏", "体育", "足球", "篮球",
+            "时尚", "美食", "旅游", "星座", "宠物", "养生", "健身", "穿搭", "美妆",
+            "entertainment", "celebrity", "movie", "music", "game", "sports", "football",
+            "basketball", "fashion", "food", "travel", "horoscope", "pet", "fitness",
+            "gossip", "drama", "anime", "gaming", "concert", "festival", "celebrity",
+            "lifestyle", "cooking", "recipe", "beauty", "wellness"
+        };
+
         // Category keyword mapping
         String[][] categoryKeywords = {
             {"军事", "军事", "军演", "导弹", "军舰", "战机", "武器", "国防", "军队", "航母", "防空", "导弹", "海军", "空军", "陆军"},
@@ -786,6 +812,15 @@ public class AiSummaryGenerator {
             String keyword = str(post.get("trigger_keyword"));
             String title = str(post.get("title"));
             String combined = keyword + " " + title;
+
+            // Skip lifestyle/entertainment content
+            boolean excluded = false;
+            String combinedLower = combined.toLowerCase();
+            for (String ex : excludeKeywords) {
+                if (combinedLower.contains(ex.toLowerCase())) { excluded = true; break; }
+            }
+            if (excluded) continue;
+
             boolean matched = false;
             for (String[] ck : categoryKeywords) {
                 for (int i = 1; i < ck.length; i++) {
@@ -812,6 +847,15 @@ public class AiSummaryGenerator {
             String keywords = str(n.get("keywords"));
             String title = str(n.get("title"));
             String combined = keywords + " " + title;
+
+            // Skip lifestyle/entertainment content
+            boolean excluded = false;
+            String combinedLower = combined.toLowerCase();
+            for (String ex : excludeKeywords) {
+                if (combinedLower.contains(ex.toLowerCase())) { excluded = true; break; }
+            }
+            if (excluded) continue;
+
             boolean matched = false;
             for (String[] ck : categoryKeywords) {
                 for (int i = 1; i < ck.length; i++) {
@@ -1057,13 +1101,14 @@ public class AiSummaryGenerator {
     /**
      * Build the final structured JSON content string.
      */
-    private String buildStructuredJson(String title, String summaryText, String riskLevel,
+    private String buildStructuredJson(String title, String summaryText, String riskLevel, String riskReason,
                                         Map<String, Object> categories, Map<String, Object> stats,
                                         Map<String, Object> trends, List<String> suggestions) {
         try {
             Map<String, Object> json = new LinkedHashMap<>();
             json.put("title", title);
             json.put("risk_level", riskLevel);
+            json.put("risk_reason", riskReason);
             json.put("summary", summaryText);
             json.put("categories", categories.get("categories"));
             json.put("stats", stats);
