@@ -11,7 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 每半点（如 1:30, 2:30...）自动生成 AI 舆情简报。
+ * 每6小时整点（如 0:00, 6:00, 12:00, 18:00）自动生成 AI 舆情简报。
  * 异步非阻塞，不干扰爬虫任务和前端请求。
  */
 @Component
@@ -31,11 +31,10 @@ public class AiSummaryScheduler {
     private volatile boolean generating = false;
 
     /**
-     * 每半点触发（1:30, 2:30, 3:30...）。
-     * 与爬虫错开：爬虫在整点启动，简报在半点生成。
+     * 每6小时整点触发（0:00, 6:00, 12:00, 18:00）。
      */
-    @Scheduled(cron = "0 30 * * * *")
-    public void generateHourlySummary() {
+    @Scheduled(cron = "0 0 */6 * * *")
+    public void generateSixHourlySummary() {
         if (generating) {
             log.info("[AI Summary] 已在生成中，跳过本次触发");
             return;

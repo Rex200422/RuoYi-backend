@@ -20,10 +20,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * AI Summary Generator - V4
- * Layered data fetch (1h->6h->24h for posts, 12h->24h for news)
- * + dual-model: pre-summarization (qwen3.5 4b, fully in VRAM) + generation (qwen3.6 27B, 45/64 layers GPU)
- * + Thinking Preservation: 4b pre-analysis → structured context → 27b final generation
+ * AI Summary Generator - V5 (Structured JSON Output)
+ * Fixed-window data fetch (6h for posts, 24h for news)
+ * + dual-model: pre-summarization (qwen3.5 4b) + generation (qwen3.6 27B)
+ * + Output: structured JSON with title, summary, categories, stats, trends, suggestions
+ * + 27B model only generates short summary (3-5 sentences) + risk assessment
+ * + Statistical data extracted by Java code from pre-summarized results
  * + keep_alive=-1: both models stay resident in memory (no swap)
  */
 @Service
@@ -47,20 +49,14 @@ public class AiSummaryGenerator {
     private static final int POST_BUDGET = (int) (SAFE_TOKENS * 0.50);   // 14400
     private static final int PREV_BUDGET = (int) (SAFE_TOKENS * 0.10);   // 2880
 
-    // Pre-summarization: unified threshold for both news and posts
-    private static final int PRE_SUMMARY_THRESHOLD = 800;
-
     // Limits
     private static final int MAX_POSTS = 200;
     private static final int MAX_NEWS = 200;
     private static final int TOP_COMMENTS_PER_POST = 20;
-
-    // Time windows for layered fetch
-    private static final int POST_FRESH_HOURS = 1;
-    private static final int POST_FALLBACK_HOURS_1 = 6;
-    private static final int POST_FALLBACK_HOURS_2 = 24;
-    private static final int NEWS_FRESH_HOURS = 12;
-    private static final int NEWS_FALLBACK_HOURS = 24;
+    
+    // Time windows for fixed-window fetch
+    private static final int POST_DATA_HOURS = 6;
+    private static final int NEWS_DATA_HOURS = 24;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -84,9 +80,9 @@ public class AiSummaryGenerator {
 
         LocalDateTime now = LocalDateTime.now();
         try {
-            // ---- Layered data fetch ----
-            List<Map<String, Object>> posts = fetchPostsLayered(now);
-            List<Map<String, Object>> news = fetchNewsLayered(now);
+            // ---- Fixed-window data fetch ----
+            List<Map<String, Object>> posts = fetchPosts(now);
+            List<Map<String, Object>> news = fetchNews(now);
             log.info("[AI Summary] Posts: {}, News: {}", posts.size(), news.size());
 
             // Fetch comments associated with fetched posts
@@ -116,9 +112,9 @@ public class AiSummaryGenerator {
                 commentsByPost.computeIfAbsent(pid, k -> new ArrayList<>()).add(c);
             }
 
-            // ---- Pre-summarize ALL long content via Ollama (qwen3.5 4b, fast) ----
-            preSummarizeLongContent(posts, "post", commentsByPost);
-            preSummarizeLongContent(news, "news", commentsByPost);
+            // ---- Pre-summarize ALL content via Ollama (qwen3.5 4b, fast) ----
+            preSummarizeAllContent(posts, "post", commentsByPost);
+            preSummarizeAllContent(news, "news", commentsByPost);
 
             // ---- Build prompt ----
             String dataSection = buildDataSection(posts, comments, news);
@@ -162,89 +158,34 @@ public class AiSummaryGenerator {
         }
     }
 
-    // ==================== Layered Data Fetching ====================
+    // ==================== Fixed-Window Data Fetching ====================
 
     /**
-     * Layer 1: posts within 1h. Layer 2: 1-6h. Layer 3: 6-24h.
-     * Each layer fills remaining token budget.
+     * Fetch posts within the fixed POST_DATA_HOURS window (6h).
      */
-    private List<Map<String, Object>> fetchPostsLayered(LocalDateTime now) {
+    private List<Map<String, Object>> fetchPosts(LocalDateTime now) {
         String sql = "SELECT post_id, title, author, site_name, like_count, comment_count, "
             + "content, pre_summary, trigger_keyword, crawl_time FROM social_post "
             + "WHERE crawl_time > ? ORDER BY like_count DESC, crawl_time DESC LIMIT ?";
 
-        // Layer 1: 1h
-        List<Map<String, Object>> all = new ArrayList<>();
-        LocalDateTime cutoff1 = now.minusHours(POST_FRESH_HOURS);
-        all.addAll(jdbc.queryForList(sql, java.sql.Timestamp.valueOf(cutoff1), MAX_POSTS));
-        log.info("[AI Summary] Posts layer1 (1h): {}", all.size());
-
-        // Layer 2: 6h
-        if (estimateListTokens(all) < POST_BUDGET) {
-            LocalDateTime cutoff2 = now.minusHours(POST_FALLBACK_HOURS_1);
-            List<Map<String, Object>> layer2 = jdbc.queryForList(sql,
-                java.sql.Timestamp.valueOf(cutoff2), MAX_POSTS);
-            // Deduplicate by post_id
-            Set<String> seen = new HashSet<>();
-            for (Map<String, Object> p : all) seen.add(str(p.get("post_id")));
-            for (Map<String, Object> p : layer2) {
-                if (!seen.contains(str(p.get("post_id")))) {
-                    all.add(p);
-                    seen.add(str(p.get("post_id")));
-                }
-            }
-            log.info("[AI Summary] Posts layer2 (6h): +{} = {}", layer2.size() - (layer2.size() - layer2.stream().filter(p -> !seen.contains(str(p.get("post_id")))).count()), all.size());
-        }
-
-        // Layer 3: 24h
-        if (estimateListTokens(all) < POST_BUDGET) {
-            LocalDateTime cutoff3 = now.minusHours(POST_FALLBACK_HOURS_2);
-            List<Map<String, Object>> layer3 = jdbc.queryForList(sql,
-                java.sql.Timestamp.valueOf(cutoff3), MAX_POSTS);
-            Set<String> seen = new HashSet<>();
-            for (Map<String, Object> p : all) seen.add(str(p.get("post_id")));
-            for (Map<String, Object> p : layer3) {
-                if (!seen.contains(str(p.get("post_id")))) {
-                    all.add(p);
-                    seen.add(str(p.get("post_id")));
-                }
-            }
-            log.info("[AI Summary] Posts layer3 (24h): total={}", all.size());
-        }
-
+        LocalDateTime cutoff = now.minusHours(POST_DATA_HOURS);
+        List<Map<String, Object>> all = jdbc.queryForList(sql,
+            java.sql.Timestamp.valueOf(cutoff), MAX_POSTS);
+        log.info("[AI Summary] Posts ({}h): {}", POST_DATA_HOURS, all.size());
         return all;
     }
 
     /**
-     * Layer 1: news within 12h. Layer 2: 24h if token budget allows.
+     * Fetch news within the fixed NEWS_DATA_HOURS window (24h).
      */
-    private List<Map<String, Object>> fetchNewsLayered(LocalDateTime now) {
+    private List<Map<String, Object>> fetchNews(LocalDateTime now) {
         String sql = "SELECT title, source, keywords, content, publish_date, crawl_time "
             + "FROM news_article WHERE crawl_time > ? ORDER BY crawl_time DESC LIMIT ?";
 
-        // Layer 1: 12h
-        List<Map<String, Object>> all = new ArrayList<>();
-        LocalDateTime cutoff1 = now.minusHours(NEWS_FRESH_HOURS);
-        all.addAll(jdbc.queryForList(sql, java.sql.Timestamp.valueOf(cutoff1), MAX_NEWS));
-        log.info("[AI Summary] News layer1 (12h): {}", all.size());
-
-        // Layer 2: 24h
-        if (estimateListTokens(all) < NEWS_BUDGET) {
-            LocalDateTime cutoff2 = now.minusHours(NEWS_FALLBACK_HOURS);
-            List<Map<String, Object>> layer2 = jdbc.queryForList(sql,
-                java.sql.Timestamp.valueOf(cutoff2), MAX_NEWS);
-            Set<String> seen = new HashSet<>();
-            for (Map<String, Object> n : all) seen.add(str(n.get("url")) + str(n.get("title")));
-            for (Map<String, Object> n : layer2) {
-                String key = str(n.get("url")) + str(n.get("title"));
-                if (!seen.contains(key)) {
-                    all.add(n);
-                    seen.add(key);
-                }
-            }
-            log.info("[AI Summary] News layer2 (24h): total={}", all.size());
-        }
-
+        LocalDateTime cutoff = now.minusHours(NEWS_DATA_HOURS);
+        List<Map<String, Object>> all = jdbc.queryForList(sql,
+            java.sql.Timestamp.valueOf(cutoff), MAX_NEWS);
+        log.info("[AI Summary] News ({}h): {}", NEWS_DATA_HOURS, all.size());
         return all;
     }
 
@@ -291,7 +232,7 @@ public class AiSummaryGenerator {
 
     private boolean hasFreshPosts(List<Map<String, Object>> posts) {
         if (posts.isEmpty()) return false;
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(POST_FRESH_HOURS);
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(POST_DATA_HOURS);
         for (Map<String, Object> p : posts) {
             Object ct = p.get("crawl_time");
             if (ct != null) {
@@ -304,7 +245,7 @@ public class AiSummaryGenerator {
 
     private boolean hasFreshNews(List<Map<String, Object>> news) {
         if (news.isEmpty()) return false;
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(NEWS_FRESH_HOURS);
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(NEWS_DATA_HOURS);
         for (Map<String, Object> n : news) {
             Object ct = n.get("crawl_time");
             if (ct != null) {
@@ -333,11 +274,10 @@ public class AiSummaryGenerator {
     // ==================== Pre-summarization (qwen3.5 4b) ====================
 
     /**
-     * ALL items exceeding PRE_SUMMARY_THRESHOLD tokens get LLM pre-summary.
-     * No truncation fallback — every long item goes through the presumer.
+     * ALL items get LLM pre-summary regardless of content length.
      * Uses qwen3.5 4b (fully in VRAM, ~2s per call) for speed.
      */
-    private void preSummarizeLongContent(List<Map<String, Object>> items, String type, Map<String, List<Map<String, Object>>> commentsByPost) {
+    private void preSummarizeAllContent(List<Map<String, Object>> items, String type, Map<String, List<Map<String, Object>>> commentsByPost) {
         int processed = 0;
         int total = items.size();
         // Build commentsByPost from parameter if not provided
@@ -347,8 +287,7 @@ public class AiSummaryGenerator {
         for (Map<String, Object> item : items) {
             String title = str(item.get("title"));
             String content = str(item.get("content"));
-            if (content.isEmpty() || content.equals(title)) continue;
-
+            if (content.isEmpty() && title.isEmpty()) continue;
             // Check if pre_summary already cached in DB
             String cachedSummary = str(item.get("pre_summary"));
             if (!cachedSummary.isEmpty()) {
@@ -356,61 +295,38 @@ public class AiSummaryGenerator {
                 continue; // Skip LLM call, use cached
             }
 
-            // For posts: calculate token estimate including ALL fields (title, likes, comments, keyword, content, top10 comments)
-            int tokens;
-            if ("post".equals(type)) {
-                // Build full post block to get accurate token count
-                String pid = str(item.get("post_id"));
-                List<Map<String, Object>> postComments = commentsByPost.getOrDefault(pid, Collections.emptyList());
-                String fullBlock = buildPostBlock(item, postComments);
-                tokens = estimateTokens(fullBlock);
-            } else {
-                tokens = estimateTokens(content);
-            }
-            if (tokens > PRE_SUMMARY_THRESHOLD) {
                 processed++;
                 log.info("[AI Summary] Pre-summarizing {}/{} {} ({} tokens): {}",
-                    processed, total, type, tokens, truncate(title, 60));
+                    processed, total, type, estimateTokens(content), truncate(title, 60));
                 // Build full context for pre-summary (includes engagement + comments)
-                String fullContext;
-                if ("post".equals(type)) {
-                    StringBuilder ctx = new StringBuilder();
-                    ctx.append("标题: ").append(title);
-                    int likes = intVal(item.get("like_count"));
-                    int commentCount = intVal(item.get("comment_count"));
-                    String keyword = str(item.get("trigger_keyword"));
-                    ctx.append("\n互动: ").append(likes).append("赞 ").append(commentCount).append("评 | 关键词: ").append(keyword);
-                    ctx.append("\n正文: ").append(content);
-                    String postPid = str(item.get("post_id"));
-                    List<Map<String, Object>> postComments = commentsByPost.getOrDefault(postPid, Collections.emptyList());
-                    if (!postComments.isEmpty()) {
-                        ctx.append("\n热门评论:");
-                        int idx = 1;
-                        for (Map<String, Object> c : postComments) {
-                            ctx.append("\n  ").append(idx++).append(". ").append(str(c.get("commenter")))
-                              .append(" (").append(intVal(c.get("comment_likes"))).append("赞): ")
-                              .append(str(c.get("comment_content")));
-                            if (idx > 10) break;
-                        }
-                    }
-                    fullContext = ctx.toString();
-                } else {
-                    fullContext = "标题: " + title + "\n正文: " + content;
-                }
-                String summary = callPreSummarize(fullContext, type);
-                if (summary != null && !summary.isEmpty()) {
-                    item.put("_pre_summary", summary);
-                }
-                // Also pre-summarize associated comments if any are long
-                if ("post".equals(type) && item.containsKey("comment_content")) {
-                    String commentContent = str(item.get("comment_content"));
-                    if (estimateTokens(commentContent) > PRE_SUMMARY_THRESHOLD) {
-                        String cs = callPreSummarize("标题: " + str(item.get("post_title")) + "\n评论内容: " + commentContent, "comment");
-                        if (cs != null && !cs.isEmpty()) {
-                            item.put("_pre_comment_summary", cs);
-                        }
+            String fullContext;
+            if ("post".equals(type)) {
+                StringBuilder ctx = new StringBuilder();
+                ctx.append("标题: ").append(title);
+                int likes = intVal(item.get("like_count"));
+                int commentCount = intVal(item.get("comment_count"));
+                String keyword = str(item.get("trigger_keyword"));
+                ctx.append("\n互动: ").append(likes).append("赞 ").append(commentCount).append("评 | 关键词: ").append(keyword);
+                ctx.append("\n正文: ").append(content);
+                String postPid = str(item.get("post_id"));
+                List<Map<String, Object>> postComments = commentsByPost.getOrDefault(postPid, Collections.emptyList());
+                if (!postComments.isEmpty()) {
+                    ctx.append("\n热门评论:");
+                    int idx = 1;
+                    for (Map<String, Object> c : postComments) {
+                        ctx.append("\n  ").append(idx++).append(". ").append(str(c.get("commenter")))
+                          .append(" (").append(intVal(c.get("comment_likes"))).append("赞): ")
+                          .append(str(c.get("comment_content")));
+                        if (idx > 10) break;
                     }
                 }
+                fullContext = ctx.toString();
+            } else {
+                fullContext = "标题: " + title + "\n正文: " + content;
+            }
+            String summary = callPreSummarize(fullContext, type);
+            if (summary != null && !summary.isEmpty()) {
+                item.put("_pre_summary", summary);
             }
         }
         if (processed > 0) {
