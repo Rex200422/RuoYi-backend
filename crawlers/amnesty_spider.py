@@ -8,6 +8,7 @@ from content_utils import extract_content_playwright, remove_boilerplate_text
 
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
+from retry_utils import with_retry_goto
 from common_db import get_db, save_news_article, update_crawl_log_start, update_crawl_log, update_crawl_log_error, update_config_last_crawl
 
 
@@ -115,7 +116,7 @@ def crawl(max_pages, max_articles):
                 url = get_page_url(page_num)
                 print(f"\n访问：{url}")
                 try:
-                    list_page.goto(url, timeout=60000)
+                    with_retry_goto(list_page, url, goto_kwargs={'timeout': 60000}, description=f"访问列表页{page_num}")
                     list_page.wait_for_load_state("networkidle")
                     try: list_page.locator("button:has-text('ACCEPT')").click(timeout=3000)
                     except: pass
@@ -156,7 +157,7 @@ def crawl(max_pages, max_articles):
                 try:
                     print(f"\n采集：{news['title']}")
                     detail_page = context.new_page()
-                    detail_page.goto(news["url"], timeout=60000)
+                    with_retry_goto(detail_page, news["url"], goto_kwargs={'timeout': 60000}, description=f"访问详情页: {news['title'][:30]}")
                     detail_page.wait_for_load_state("networkidle")
                     try: detail_page.locator("button:has-text('ACCEPT')").click(timeout=3000)
                     except: pass

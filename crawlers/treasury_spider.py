@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore")
 
 # --------------- config ---------------
 from proxy_config import PROXIES, get_playwright_proxy
+from retry_utils import with_retry_goto
 HEADERS = {"User-Agent": USER_AGENT}
 
 MAIN_KEYWORDS = ["china", "taiwan"]
@@ -104,7 +105,7 @@ def extract_og_description(soup, url=None):
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True, proxy=get_playwright_proxy(), args=["--disable-dev-shm-usage", "--disable-gpu", "--disable-extensions", "--no-sandbox"])
                 page = browser.new_page()
-                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                with_retry_goto(page, url, goto_kwargs={'wait_until': 'domcontentloaded', 'timeout': 20000}, description="访问文章详情")
                 page.wait_for_timeout(3000)
                 body_text = page.evaluate("() => document.body.innerText")
                 browser.close()

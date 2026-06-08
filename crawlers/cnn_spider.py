@@ -4,6 +4,7 @@ CNN 报刊杂志新闻爬虫 v2 - 保留HTML格式
 import os, sys, re, time, random, argparse, requests
 from bs4 import BeautifulSoup
 from content_utils import clean_content_html
+from retry_utils import with_retry
 from proxy_config import PROXIES
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB, USER_AGENT
@@ -59,59 +60,56 @@ def get_article_content(url):
     invalid = ["/collections/", "/video/", "/interactive/", "live-news"]
     if any(kw in url for kw in invalid):
         return ""
-    for attempt in range(3):
-        try:
-            r = requests.get(url, headers=HEADERS, proxies=PROXIES, timeout=25, verify=False, allow_redirects=True)
-            r.raise_for_status()
-            # 如果最终URL变成了分类页面则跳过
-            final_url = r.url
-            if any(x in final_url for x in ["/specials/", "/videos/", "utm_source=section"]):
-                return ""
-            text = r.text
-            # 方法1: 从嵌入script中提取articleBody（CNN全文）
-            marker = 'articleBody'
-            pos = text.find(marker)
-            while pos != -1:
-                s = text.find('"', pos + 12)
-                if s == -1: break
-                e = s + 1
-                while e < len(text):
-                    if text[e] == chr(92) and e + 1 < len(text):
-                        e += 2
-                        continue
-                    if text[e] == chr(34):
-                        break
-                    e += 1
-                if e > s + 100:
-                    body = text[s+1:e]
-                    body = body.replace('\\n', chr(10)).replace('\\/', '/').replace('\\u003C', '<').replace('\\u003E', '>')
-                    body = re.sub(r'<[^>]+>', '', body)
-                    if len(body) > 100:
-                        paras = [p.strip() for p in body.split(chr(10)) if p.strip()]
-                        if len(paras) <= 1:
-                            paras = [p.strip() for p in re.split(r'\s{3,}', body) if p.strip()]
-                        parts = []
-                        for p in paras:
-                            if len(p) > 10 and not is_boilerplate(p):
-                                parts.append('<p>' + p + '</p>')
-                        if parts:
-                            html = chr(10).join(parts)
-                            return clean_content_html(html)[:8000]
-                pos = text.find(marker, pos + 1)
-            # 方法2: meta description (fallback)
-            soup = BeautifulSoup(text, "html.parser")
-            for meta in soup.find_all("meta"):
-                name = meta.get("name", "") or meta.get("property", "")
-                val = meta.get("content", "")
-                if name in ("description", "og:description") and val:
-                    if not is_boilerplate(val) and len(val) > 30:
-                        return '<p>' + val + '</p>'
+    try:
+        r = with_retry(lambda: requests.get(url, headers=HEADERS, proxies=PROXIES, timeout=25, verify=False, allow_redirects=True), description=f"获取文章{url[:50]}")
+        r.raise_for_status()
+        # 如果最终URL变成了分类页面则跳过
+        final_url = r.url
+        if any(x in final_url for x in ["/specials/", "/videos/", "utm_source=section"]):
             return ""
-        except Exception as e:
-            if attempt == 2:
-                print(f"  [WARN] 正文抓取失败: {url[:50]}... | {e}")
-                return ""
-            time.sleep(2)
+        text = r.text
+        # 方法1: 从嵌入script中提取articleBody（CNN全文）
+        marker = 'articleBody'
+        pos = text.find(marker)
+        while pos != -1:
+            s = text.find('"', pos + 12)
+            if s == -1: break
+            e = s + 1
+            while e < len(text):
+                if text[e] == chr(92) and e + 1 < len(text):
+                    e += 2
+                    continue
+                if text[e] == chr(34):
+                    break
+                e += 1
+            if e > s + 100:
+                body = text[s+1:e]
+                body = body.replace('\\n', chr(10)).replace('\\/', '/').replace('\\u003C', '<').replace('\\u003E', '>')
+                body = re.sub(r'<[^>]+>', '', body)
+                if len(body) > 100:
+                    paras = [p.strip() for p in body.split(chr(10)) if p.strip()]
+                    if len(paras) <= 1:
+                        paras = [p.strip() for p in re.split(r'\s{3,}', body) if p.strip()]
+                    parts = []
+                    for p in paras:
+                        if len(p) > 10 and not is_boilerplate(p):
+                            parts.append('<p>' + p + '</p>')
+                    if parts:
+                        html = chr(10).join(parts)
+                        return clean_content_html(html)[:8000]
+            pos = text.find(marker, pos + 1)
+        # 方法2: meta description (fallback)
+        soup = BeautifulSoup(text, "html.parser")
+        for meta in soup.find_all("meta"):
+            name = meta.get("name", "") or meta.get("property", "")
+            val = meta.get("content", "")
+            if name in ("description", "og:description") and val:
+                if not is_boilerplate(val) and len(val) > 30:
+                    return '<p>' + val + '</p>'
+        return ""
+    except Exception as e:
+        print(f"  [WARN] 正文抓取失败: {url[:50]}... | {e}")
+        return ""
 
 
 def crawl_cnn(max_articles, keyword=None):
@@ -126,7 +124,7 @@ def crawl_cnn(max_articles, keyword=None):
             if count >= max_articles: break
             print(f"\n访问 RSS: {feed_url}")
             try:
-                resp = requests.get(feed_url, headers=HEADERS, proxies=PROXIES, timeout=15, verify=False)
+                resp = with_retry(lambda: requests.get(feed_url, headers=HEADERS, proxies=PROXIES, timeout=15, verify=False), description=f"获取RSS{feed_url[:50]}")
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "xml")
                 items = soup.find_all("item")

@@ -8,6 +8,7 @@ from content_utils import extract_content_playwright, remove_boilerplate_text
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
+from retry_utils import with_retry_goto
 
 
 def download_image(url, article_id, idx=0):
@@ -99,7 +100,7 @@ def crawl(max_pages, max_articles):
                 url = PAGE_URL.format(page_num)
                 print(f"\n访问：{url}")
                 try:
-                    page.goto(url, timeout=60000)
+                    with_retry_goto(page, url, goto_kwargs={'timeout': 60000}, description=f"访问列表页{page_num}")
                     page.wait_for_load_state("domcontentloaded")
                 except Exception as e:
                     print(f"页面失败：{e}")
@@ -129,7 +130,7 @@ def crawl(max_pages, max_articles):
                     break
                 try:
                     print(f"\n采集：{news['title']}")
-                    page.goto(news["url"], timeout=60000)
+                    with_retry_goto(page, news["url"], goto_kwargs={'timeout': 60000}, description=f"访问详情页: {news['title'][:30]}")
                     page.wait_for_load_state("domcontentloaded")
                     h1 = page.locator("h1")
                     if h1.count() > 0: news["title"] = clean(h1.first.inner_text())

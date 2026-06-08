@@ -27,6 +27,7 @@ from common_db import get_db, save_news_article, update_crawl_log, update_crawl_
 from crawler_config import DB, IMAGE_DIR
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
+from retry_utils import with_retry_goto
 
 
 # ============================================================
@@ -254,7 +255,7 @@ def crawl(max_pages, max_articles):
                 url = get_page_url(page_num)
                 print(f"\n访问：{url}")
                 try:
-                    page.goto(url, timeout=60000)
+                    with_retry_goto(page, url, goto_kwargs={'timeout': 60000}, description=f"访问列表页{page_num}")
                     page.wait_for_load_state("domcontentloaded")
                 except Exception as e:
                     print(f"页面失败：{e}")
@@ -291,7 +292,7 @@ def crawl(max_pages, max_articles):
                     break
                 try:
                     print(f"\n采集：{news['title']}")
-                    page.goto(news["url"], timeout=60000)
+                    with_retry_goto(page, news["url"], goto_kwargs={'timeout': 60000}, description=f"访问详情页: {news['title'][:30]}")
                     page.wait_for_load_state("domcontentloaded")
 
                     # 提取标题（h1 标签）

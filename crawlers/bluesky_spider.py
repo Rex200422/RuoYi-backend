@@ -36,6 +36,7 @@ from atproto import Client
 import time
 import requests
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
+from retry_utils import with_retry
 from crawler_config import DB, IMAGE_DIR
 
 
@@ -172,7 +173,7 @@ def download_image(url, post_id, idx):
     if os.path.exists(local_path):
         return filename
     try:
-        resp = requests.get(url, proxies=PROXIES, timeout=30)
+        resp = with_retry(lambda: requests.get(url, proxies=PROXIES, timeout=30), description=f"下载图片{url[:50]}")
         resp.raise_for_status()
         with open(local_path, "wb") as f:
             f.write(resp.content)
@@ -318,7 +319,7 @@ def crawl(keywords, max_per_kw):
     """
     print("=== Bluesky 爬虫 ===")
     client = Client()
-    client.login(BSKY_USERNAME, BSKY_PASSWORD)
+    with_retry(lambda: client.login(BSKY_USERNAME, BSKY_PASSWORD), description="Bluesky登录")
     conn = get_db(); cur = conn.cursor()
     items_found = 0
     items_new = 0
@@ -328,7 +329,7 @@ def crawl(keywords, max_per_kw):
             display_kw = KEYWORD_DISPLAY.get(kw, kw)
             print(f"\n--- 搜索: {kw} ---")
             # 调用 Bluesky API 搜索帖子
-            result = client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw*6, "sort": "latest"})
+            result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw*6, "sort": "latest"}), description=f"搜索帖子{kw}")
 
             # 按媒体类型排序：有图片的帖子优先（embed.images > embed.external.thumb > 无图）
             def has_media(post):
@@ -352,7 +353,7 @@ def crawl(keywords, max_per_kw):
                 exists = cur.fetchone()
                 try:
                     # 获取完整帖子线程（帖子+评论树）
-                    th = client.app.bsky.feed.get_post_thread({"uri":uri,"depth":DEPTH})
+                    th = with_retry(lambda: client.app.bsky.feed.get_post_thread({"uri":uri,"depth":DEPTH}), description=f"获取帖子线程{uri[:50]}")
                     if exists:
                         # 已有帖子：只更新互动数据(点赞/评论数)，同时更新评论详情
                         post_obj = th.thread.post if th.thread else None

@@ -10,6 +10,7 @@ from crawler_config import DB, IMAGE_DIR
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 import requests as req_lib
 from bs4 import BeautifulSoup
+from retry_utils import with_retry
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 
@@ -83,7 +84,7 @@ def download_image(url, article_id, idx=0):
             return fname
         os.makedirs(IMAGE_DIR, exist_ok=True)
         session = create_session()
-        r = session.get(url, timeout=30, proxies={'http': None, 'https': None})
+        r = with_retry(lambda: session.get(url, timeout=30, proxies={'http': None, 'https': None}), description=f"下载图片{url[:50]}")
         if r.status_code == 200 and len(r.content) > 1000:
             with open(path, "wb") as f:
                 f.write(r.content)
@@ -104,7 +105,7 @@ def fetch_list_page(session, page_num):
     url = f"{BASE_URL}/news/" if page_num == 1 else f"{BASE_URL}/news/page/{page_num}/"
     print(f"\n访问：{url}")
     try:
-        r = session.get(url, timeout=20, proxies={'http': None, 'https': None})
+        r = with_retry(lambda: session.get(url, timeout=20, proxies={'http': None, 'https': None}), description=f"获取列表页{url[:50]}")
         soup = BeautifulSoup(r.text, 'html.parser')
         items = soup.select('li.wp-block-post')
         print(f"文章块：{len(items)}")
@@ -135,7 +136,7 @@ def fetch_detail(session, url):
     获取详情页，解析正文内容。
     返回: {"content": str, "cover_image": str, "date": str} 或 None
     """
-    r = session.get(url, timeout=20, proxies={'http': None, 'https': None})
+    r = with_retry(lambda: session.get(url, timeout=20, proxies={'http': None, 'https': None}), description=f"获取详情页{url[:50]}")
     soup = BeautifulSoup(r.text, 'html.parser')
 
     # 提取正文：main标签中的p/h2/h3/li
