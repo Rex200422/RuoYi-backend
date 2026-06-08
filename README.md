@@ -37,6 +37,7 @@ RuoYi-backend/
 ├── crawlers/             # Python 爬虫目录
 │   ├── crawler_config.py       # 统一配置（DB、代理、图片路径）
 │   ├── proxy_config.py         # 代理配置模块
+│   ├── retry_utils.py          # 通用重试工具模块
 │   ├── common_db.py            # 数据库操作函数
 │   ├── content_utils.py        # HTML 内容清洗工具
 │   ├── template_news_spider.py # 新闻类爬虫模板
@@ -117,5 +118,6 @@ nohup gost -L :7890 -F http://192.168.0.14:7890 \
 |------|------|
 | `common_db.py` | 数据库操作函数，被所有爬虫共用 |
 | `proxy_config.py` | 代理配置模块 |
+| `retry_utils.py` | 通用重试工具模块 |
 | `content_utils.py` | HTML 内容清洗工具 |
 | `crawler_config.py` | 统一配置文件 |

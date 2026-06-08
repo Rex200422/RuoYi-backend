@@ -430,3 +430,24 @@ Bluesky 社交平台爬虫，展示了完整的社媒爬虫实现：
 - [ ] 实现核心函数（`fetch_article_list` + `fetch_article_detail` 或 `search_posts`）
 - [ ] 运行 `python xxx_spider.py --max 3` 测试
 - [ ] 检查数据库确认数据正确
+
+### 5）错误重试机制（必须）
+
+代理连接可能不稳定，所有关键请求都应使用 `retry_utils` 模块进行重试：
+
+```python
+from retry_utils import with_retry, with_retry_goto
+
+# requests 请求重试（最多3次，随机间隔2-5秒）
+r = with_retry(lambda: session.get(url, timeout=20, proxies=PROXIES), description="获取列表页")
+
+# Playwright 页面加载重试
+with_retry_goto(page, url, goto_kwargs={'timeout': 60000}, description="访问列表页")
+```
+
+**重试规则：**
+- 最多重试 3 次（含首次）
+- 重试间隔：2-5 秒随机
+- Playwright 重试时会自动刷新页面清理状态
+- 失败时打印详细日志
+

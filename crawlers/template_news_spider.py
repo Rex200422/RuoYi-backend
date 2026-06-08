@@ -37,6 +37,7 @@ from common_db import (
     update_crawl_log, update_crawl_log_error,
     update_config_last_crawl, update_crawl_log_start,
 )
+from retry_utils import with_retry
 
 
 # ===== 配置区：需要根据目标站点修改 =====
