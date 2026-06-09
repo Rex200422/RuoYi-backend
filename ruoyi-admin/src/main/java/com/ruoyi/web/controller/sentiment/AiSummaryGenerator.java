@@ -1092,7 +1092,16 @@ public class AiSummaryGenerator {
                 json.put("change", change);
             }
             json.put("categories", categories.get("categories"));
-            json.put("category_counts", buildCategoryCountsJson(categories));
+            // Build category_counts as a Map (not String) to avoid double-serialization
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> cats = (List<Map<String, Object>>) categories.get("categories");
+            Map<String, Integer> categoryCountsMap = new LinkedHashMap<>();
+            if (cats != null) {
+                for (Map<String, Object> cat : cats) {
+                    categoryCountsMap.put(str(cat.get("name")), intVal(cat.get("count")));
+                }
+            }
+            json.put("category_counts", categoryCountsMap);
             json.put("stats", stats);
             json.put("trends", trends);
             json.put("suggestions", suggestions);
@@ -1196,7 +1205,7 @@ public class AiSummaryGenerator {
                     counts.put(str(cat.get("name")), intVal(cat.get("count")));
                 }
             }
-            return mapper.writeValueAsString(counts);
+            return counts.toString();
         } catch (Exception e) {
             return "{}";
         }
