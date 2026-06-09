@@ -10,6 +10,8 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import java.util.Collections;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,7 +58,15 @@ public class AiSummaryGenerator {
     
     // Time windows for fixed-window fetch
     private static final int POST_DATA_HOURS = 6;
-    private static final int NEWS_DATA_HOURS = 24;
+    private static final int NEWS_DATA_HOURS = 6;
+
+    // Predefined event categories (20 categories + 兜底)
+    private static final String[] EVENT_CATEGORIES = {
+        "军事", "贸易", "外交", "科技", "人权",
+        "社会", "经济", "政治", "台海", "港澳",
+        "南海", "网络安全", "军售", "制裁", "能源",
+        "教育", "环境", "金融", "移民", "其他"
+    };
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -128,6 +138,7 @@ public class AiSummaryGenerator {
 
             // ---- Extract structured stats from raw data (Java code, no LLM) ----
             Map<String, Object> categories = extractCategoryStats(posts, news);
+            String categoryCounts = buildCategoryCountsJson(categories);
             Map<String, Object> stats = extractKeywordStats(posts, news);
             Map<String, Object> trends = extractTrends(posts, news, now);
             String riskFromTrend = assessRiskFromTrends(trends);
@@ -158,9 +169,9 @@ public class AiSummaryGenerator {
             log.info("[AI Summary] Risk: {} - {}", riskLevel, riskReason);
 
             // ---- Build structured JSON output ----
-            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, riskReason, categories, stats, trends, suggestions);
+            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, riskReason, categories, stats, trends, suggestions, categoryCounts);
 
-            saveSummary(title, jsonContent, riskLevel, now, newsCount, postCount, genSeconds);
+            saveSummary(title, jsonContent, riskLevel, now, newsCount, postCount, genSeconds, categoryCounts);
             log.info("[AI Summary] === V5 Done (structured JSON) ===");
             return true;
         } catch (Exception e) {
@@ -179,7 +190,7 @@ public class AiSummaryGenerator {
      */
     private List<Map<String, Object>> fetchPosts(LocalDateTime now) {
         String sql = "SELECT post_id, title, author, site_name, like_count, comment_count, "
-            + "content, pre_summary, trigger_keyword, crawl_time FROM social_post "
+            + "content, pre_summary, trigger_keyword, crawl_time, category FROM social_post "
             + "WHERE crawl_time > ? ORDER BY like_count DESC, crawl_time DESC LIMIT ?";
 
         LocalDateTime cutoff = now.minusHours(POST_DATA_HOURS);
@@ -193,7 +204,7 @@ public class AiSummaryGenerator {
      * Fetch news within the fixed NEWS_DATA_HOURS window (24h).
      */
     private List<Map<String, Object>> fetchNews(LocalDateTime now) {
-        String sql = "SELECT title, source, keywords, content, publish_date, crawl_time "
+        String sql = "SELECT title, source, keywords, content, publish_date, crawl_time, category "
             + "FROM news_article WHERE crawl_time > ? ORDER BY crawl_time DESC LIMIT ?";
 
         LocalDateTime cutoff = now.minusHours(NEWS_DATA_HOURS);
@@ -338,9 +349,11 @@ public class AiSummaryGenerator {
             } else {
                 fullContext = "标题: " + title + "\n正文: " + content;
             }
-            String summary = callPreSummarize(fullContext, type);
-            if (summary != null && !summary.isEmpty()) {
-                item.put("_pre_summary", summary);
+            String rawResult = callPreSummarize(fullContext, type);
+            if (rawResult != null && !rawResult.isEmpty()) {
+                Map<String, String> parsed = parsePreSummaryResult(rawResult);
+                item.put("_pre_summary", parsed.get("summary"));
+                item.put("_category", parsed.get("category"));
             }
         }
         if (processed > 0) {
@@ -349,11 +362,22 @@ public class AiSummaryGenerator {
     }
 
     private String callPreSummarize(String fullContext, String type) {
+        String catList = String.join("、", EVENT_CATEGORIES);
         String prompt;
         if ("news".equals(type)) {
-            prompt = "请为以下新闻生成150字以内的核心摘要，保留关键信息（时间、地点、人物、事件、影响）：\n" + fullContext;
+            prompt = "请为以下新闻生成150字以内的核心摘要，并给出分类。\n"
+                + "分类必须是以下之一：" + catList + "\n"
+                + "请按以下格式输出（两行）：\n"
+                + "摘要文本\n"
+                + "分类: xxx\n\n"
+                + fullContext;
         } else {
-            prompt = "请为以下帖子生成100字以内的核心摘要，保留关键信息（话题、作者观点、互动热度、评论焦点、关键细节）：\n" + fullContext;
+            prompt = "请为以下帖子生成100字以内的核心摘要，并给出分类。\n"
+                + "分类必须是以下之一：" + catList + "\n"
+                + "请按以下格式输出（两行）：\n"
+                + "摘要文本\n"
+                + "分类: xxx\n\n"
+                + fullContext;
         }
 
         try {
@@ -363,7 +387,7 @@ public class AiSummaryGenerator {
             body.put("think", false);
             body.put("messages", List.of(
                 Map.of("role", "system", "content",
-                    "你是一个文本摘要助手。请用简洁的中文概括以下内容的核心要点。直接输出摘要，不要思考过程。"),
+                    "你是一个文本摘要和分类助手。请用简洁的中文概括以下内容的核心要点，并给出正确的分类。直接输出摘要和分类，不要思考过程。"),
                 Map.of("role", "user", "content", prompt)
             ));
             body.put("stream", false);
@@ -684,14 +708,15 @@ public class AiSummaryGenerator {
     }
 
     private void saveSummary(String title, String content, String riskLevel,
-                              LocalDateTime dataEnd, int newsCount, int socialCount, int genSeconds) {
+                              LocalDateTime dataEnd, int newsCount, int socialCount, int genSeconds,
+                              String categoryCounts) {
         jdbc.update(
             "INSERT INTO ai_summary (summary_type, title, content, risk_level, "
-            + "data_start, data_end, news_count, social_count, model_name, generate_time) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "data_start, data_end, news_count, social_count, model_name, generate_time, category_counts) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             "hourly", title, content, riskLevel,
             java.sql.Timestamp.valueOf(dataEnd), java.sql.Timestamp.valueOf(dataEnd),
-            newsCount, socialCount, GENERATION_MODEL, genSeconds
+            newsCount, socialCount, GENERATION_MODEL, genSeconds, categoryCounts
         );
     }
 
@@ -706,9 +731,11 @@ public class AiSummaryGenerator {
             Object pre = p.get("_pre_summary");
             if (pre != null && !str(pre).isEmpty()) {
                 try {
+                    String category = str(p.get("_category"));
+                    if (category.isEmpty()) category = "其他";
                     jdbc.update(
-                        "UPDATE social_post SET pre_summary = ? WHERE post_id = ? AND (pre_summary IS NULL OR pre_summary = '')",
-                        str(pre), str(p.get("post_id"))
+                        "UPDATE social_post SET pre_summary = ?, category = ? WHERE post_id = ? AND (pre_summary IS NULL OR pre_summary = '')",
+                        str(pre), category, str(p.get("post_id"))
                     );
                     saved++;
                 } catch (Exception e) {
@@ -720,9 +747,11 @@ public class AiSummaryGenerator {
             Object pre = n.get("_pre_summary");
             if (pre != null && !str(pre).isEmpty()) {
                 try {
+                    String category = str(n.get("_category"));
+                    if (category.isEmpty()) category = "其他";
                     jdbc.update(
-                        "UPDATE news_article SET pre_summary = ? WHERE title = ? AND (pre_summary IS NULL OR pre_summary = '')",
-                        str(pre), str(n.get("title"))
+                        "UPDATE news_article SET pre_summary = ?, category = ? WHERE title = ? AND (pre_summary IS NULL OR pre_summary = '')",
+                        str(pre), category, str(n.get("title"))
                     );
                     saved++;
                 } catch (Exception e) {
@@ -777,7 +806,8 @@ public class AiSummaryGenerator {
     }
 
     /**
-     * Extract category statistics from posts and news using keyword matching.
+     * Extract category statistics from posts and news.
+     * Uses DB category field first, falls back to classifyByKeywords.
      * Returns a list of category objects with name, count, trend, and events.
      */
     @SuppressWarnings("unchecked")
@@ -785,95 +815,33 @@ public class AiSummaryGenerator {
         Map<String, Integer> categoryCount = new LinkedHashMap<>();
         Map<String, List<String>> categoryEvents = new LinkedHashMap<>();
 
-        // Exclusion keywords — lifestyle/entertainment content not counted in statistics
-        String[] excludeKeywords = {
-            "娱乐", "明星", "综艺", "电影", "音乐", "游戏", "体育", "足球", "篮球",
-            "时尚", "美食", "旅游", "星座", "宠物", "养生", "健身", "穿搭", "美妆",
-            "entertainment", "celebrity", "movie", "music", "game", "sports", "football",
-            "basketball", "fashion", "food", "travel", "horoscope", "pet", "fitness",
-            "gossip", "drama", "anime", "gaming", "concert", "festival", "celebrity",
-            "lifestyle", "cooking", "recipe", "beauty", "wellness"
-        };
-
-        // Category keyword mapping
-        String[][] categoryKeywords = {
-            {"军事", "军事", "军演", "导弹", "军舰", "战机", "武器", "国防", "军队", "航母", "防空", "导弹", "海军", "空军", "陆军"},
-            {"贸易", "贸易", "关税", "进出口", "制裁", "贸易", "出口", "进口", "关税", "贸易战", "关税", "贸易壁垒"},
-            {"外交", "外交", "大使", "会晤", "峰会", "协议", "条约", "联合国", "外交", "访问", "会谈"},
-            {"科技", "科技", "芯片", "半导体", "AI", "人工智能", "5G", "量子", "技术", "研发", "专利"},
-            {"人权", "人权", "自由", "民主", "维权", "抗议", "言论", "新闻自由"},
-            {"社会", "社会", "民生", "教育", "医疗", "就业", "房价", "疫情", "灾害"},
-            {"经济", "经济", "GDP", "通胀", "利率", "股市", "汇率", "增长", "衰退", "就业"},
-            {"政治", "政治", "选举", "政党", "议会", "政府", "政策", "改革", "执政"}
-        };
-
         // Process posts
         for (Map<String, Object> post : posts) {
-            String keyword = str(post.get("trigger_keyword"));
-            String title = str(post.get("title"));
-            String combined = keyword + " " + title;
-
-            // Skip lifestyle/entertainment content
-            boolean excluded = false;
-            String combinedLower = combined.toLowerCase();
-            for (String ex : excludeKeywords) {
-                if (combinedLower.contains(ex.toLowerCase())) { excluded = true; break; }
+            String category = str(post.get("category"));
+            if (category.isEmpty()) {
+                category = classifyByKeywords(
+                    str(post.get("trigger_keyword")) + " " + str(post.get("title"))
+                );
             }
-            if (excluded) continue;
-
-            boolean matched = false;
-            for (String[] ck : categoryKeywords) {
-                for (int i = 1; i < ck.length; i++) {
-                    if (combined.contains(ck[i])) {
-                        String cat = ck[0];
-                        categoryCount.merge(cat, 1, Integer::sum);
-                        categoryEvents.computeIfAbsent(cat, k -> new ArrayList<>());
-                        if (categoryEvents.get(cat).size() < 3) {
-                            categoryEvents.get(cat).add(truncate(title, 80));
-                        }
-                        matched = true;
-                        break;
-                    }
-                }
-                if (matched) break;
-            }
-            if (!matched) {
-                categoryCount.merge("其他", 1, Integer::sum);
+            categoryCount.merge(category, 1, Integer::sum);
+            categoryEvents.computeIfAbsent(category, k -> new ArrayList<>());
+            if (categoryEvents.get(category).size() < 3) {
+                categoryEvents.get(category).add(truncate(str(post.get("title")), 80));
             }
         }
 
         // Process news
         for (Map<String, Object> n : news) {
-            String keywords = str(n.get("keywords"));
-            String title = str(n.get("title"));
-            String combined = keywords + " " + title;
-
-            // Skip lifestyle/entertainment content
-            boolean excluded = false;
-            String combinedLower = combined.toLowerCase();
-            for (String ex : excludeKeywords) {
-                if (combinedLower.contains(ex.toLowerCase())) { excluded = true; break; }
+            String category = str(n.get("category"));
+            if (category.isEmpty()) {
+                category = classifyByKeywords(
+                    str(n.get("keywords")) + " " + str(n.get("title"))
+                );
             }
-            if (excluded) continue;
-
-            boolean matched = false;
-            for (String[] ck : categoryKeywords) {
-                for (int i = 1; i < ck.length; i++) {
-                    if (combined.contains(ck[i])) {
-                        String cat = ck[0];
-                        categoryCount.merge(cat, 1, Integer::sum);
-                        categoryEvents.computeIfAbsent(cat, k -> new ArrayList<>());
-                        if (categoryEvents.get(cat).size() < 3) {
-                            categoryEvents.get(cat).add(truncate(title, 80));
-                        }
-                        matched = true;
-                        break;
-                    }
-                }
-                if (matched) break;
-            }
-            if (!matched) {
-                categoryCount.merge("其他", 1, Integer::sum);
+            categoryCount.merge(category, 1, Integer::sum);
+            categoryEvents.computeIfAbsent(category, k -> new ArrayList<>());
+            if (categoryEvents.get(category).size() < 3) {
+                categoryEvents.get(category).add(truncate(str(n.get("title")), 80));
             }
         }
 
@@ -947,58 +915,44 @@ public class AiSummaryGenerator {
 
     /**
      * Extract trend data: time-series category counts and risk trend from recent summaries.
-     * Time labels are generated in 6-hour intervals for the last 24 hours.
+     * Time labels are generated in 6-hour intervals for the last 48 hours (8 points).
+     * Uses DB category field first, falls back to classifyByKeywords.
      */
     private Map<String, Object> extractTrends(List<Map<String, Object>> posts, List<Map<String, Object>> news, LocalDateTime now) {
         Map<String, Object> trends = new LinkedHashMap<>();
 
-        // Generate time labels (6h intervals for last 24h = 4 points)
+        // Generate time labels (6h intervals for last 48h = 8 points)
         List<String> timeLabels = new ArrayList<>();
-        for (int i = 3; i >= 0; i--) {
+        for (int i = 7; i >= 0; i--) {
             LocalDateTime t = now.minusHours(i * 6);
             timeLabels.add(t.format(DateTimeFormatter.ofPattern("MM-dd HH")));
         }
         trends.put("time_labels", timeLabels);
 
-        // Aggregate posts into time buckets (6h each)
-        String[][] categoryKeywords = {
-            {"军事", "军事", "军演", "导弹", "军舰", "战机", "武器", "军队"},
-            {"贸易", "贸易", "关税", "进出口", "制裁"},
-            {"外交", "外交", "大使", "会晤", "峰会", "协议"},
-            {"科技", "科技", "芯片", "半导体", "AI", "人工智能", "5G"},
-            {"人权", "人权", "自由", "民主", "维权"},
-            {"社会", "社会", "民生", "教育", "医疗"},
-            {"经济", "经济", "GDP", "通胀", "利率", "股市"},
-            {"政治", "政治", "选举", "政党", "议会", "政府"}
-        };
-
+        // Initialize time series for all categories
         Map<String, int[]> categoryTimeSeries = new LinkedHashMap<>();
-        for (String[] ck : categoryKeywords) {
-            categoryTimeSeries.put(ck[0], new int[4]);
+        for (String cat : EVENT_CATEGORIES) {
+            categoryTimeSeries.put(cat, new int[8]);
         }
-        categoryTimeSeries.put("其他", new int[4]);
 
         // Count posts per time bucket
         for (Map<String, Object> post : posts) {
             LocalDateTime crawlTime = parseDateTime(post.get("crawl_time"));
             if (crawlTime == null) continue;
             int bucket = getBucketIndex(crawlTime, now);
-            if (bucket < 0 || bucket >= 4) continue;
+            if (bucket < 0 || bucket >= 8) continue;
 
-            String keyword = str(post.get("trigger_keyword")) + " " + str(post.get("title"));
-            boolean matched = false;
-            for (String[] ck : categoryKeywords) {
-                for (int i = 1; i < ck.length; i++) {
-                    if (keyword.contains(ck[i])) {
-                        categoryTimeSeries.get(ck[0])[bucket]++;
-                        matched = true;
-                        break;
-                    }
-                }
-                if (matched) break;
+            String category = str(post.get("category"));
+            if (category.isEmpty()) {
+                category = classifyByKeywords(
+                    str(post.get("trigger_keyword")) + " " + str(post.get("title"))
+                );
             }
-            if (!matched) {
-                categoryTimeSeries.get("其他")[bucket]++;
+            int[] series = categoryTimeSeries.get(category);
+            if (series != null) {
+                series[bucket]++;
+            } else {
+                categoryTimeSeries.computeIfAbsent("其他", k -> new int[8])[bucket]++;
             }
         }
 
@@ -1007,56 +961,52 @@ public class AiSummaryGenerator {
             LocalDateTime crawlTime = parseDateTime(n.get("crawl_time"));
             if (crawlTime == null) continue;
             int bucket = getBucketIndex(crawlTime, now);
-            if (bucket < 0 || bucket >= 4) continue;
+            if (bucket < 0 || bucket >= 8) continue;
 
-            String keywords = str(n.get("keywords")) + " " + str(n.get("title"));
-            boolean matched = false;
-            for (String[] ck : categoryKeywords) {
-                for (int i = 1; i < ck.length; i++) {
-                    if (keywords.contains(ck[i])) {
-                        categoryTimeSeries.get(ck[0])[bucket]++;
-                        matched = true;
-                        break;
-                    }
-                }
-                if (matched) break;
+            String category = str(n.get("category"));
+            if (category.isEmpty()) {
+                category = classifyByKeywords(
+                    str(n.get("keywords")) + " " + str(n.get("title"))
+                );
             }
-            if (!matched) {
-                categoryTimeSeries.get("其他")[bucket]++;
+            int[] series = categoryTimeSeries.get(category);
+            if (series != null) {
+                series[bucket]++;
+            } else {
+                categoryTimeSeries.computeIfAbsent("其他", k -> new int[8])[bucket]++;
             }
         }
 
         // Build category_trends
         Map<String, List<Integer>> categoryTrends = new LinkedHashMap<>();
         for (Map.Entry<String, int[]> entry : categoryTimeSeries.entrySet()) {
-            List<Integer> values = new ArrayList<>();
-            for (int v : entry.getValue()) {
-                values.add(v);
-            }
-            // Only include non-empty categories
             int total = 0;
             for (int v : entry.getValue()) total += v;
             if (total > 0) {
+                List<Integer> values = new ArrayList<>();
+                for (int v : entry.getValue()) {
+                    values.add(v);
+                }
                 categoryTrends.put(entry.getKey(), values);
             }
         }
         trends.put("category_trends", categoryTrends);
 
-        // Fetch recent risk trends from DB (last 4 summaries)
-        List<String> riskTrend = fetchRecentRiskTrends(4);
+        // Fetch recent risk trends from DB (last 8 summaries)
+        List<String> riskTrend = fetchRecentRiskTrends(8);
         trends.put("risk_trend", riskTrend);
 
         return trends;
     }
 
     /**
-     * Get time bucket index: 0=oldest, 3=newest (6h buckets over 24h)
+     * Get time bucket index: 0=oldest, 7=newest (6h buckets over 48h)
      */
     private int getBucketIndex(LocalDateTime crawlTime, LocalDateTime now) {
         long hoursAgo = java.time.Duration.between(crawlTime, now).toHours();
         if (hoursAgo < 0) hoursAgo = 0;
-        int bucket = 3 - (int)(hoursAgo / 6);
-        return Math.max(0, Math.min(3, bucket));
+        int bucket = 7 - (int)(hoursAgo / 6);
+        return Math.max(0, Math.min(7, bucket));
     }
 
     /**
@@ -1103,7 +1053,8 @@ public class AiSummaryGenerator {
      */
     private String buildStructuredJson(String title, String summaryText, String riskLevel, String riskReason,
                                         Map<String, Object> categories, Map<String, Object> stats,
-                                        Map<String, Object> trends, List<String> suggestions) {
+                                        Map<String, Object> trends, List<String> suggestions,
+                                        String categoryCounts) {
         try {
             Map<String, Object> json = new LinkedHashMap<>();
             json.put("title", title);
@@ -1111,12 +1062,112 @@ public class AiSummaryGenerator {
             json.put("risk_reason", riskReason);
             json.put("summary", summaryText);
             json.put("categories", categories.get("categories"));
+            json.put("category_counts", categoryCounts);
             json.put("stats", stats);
             json.put("trends", trends);
             json.put("suggestions", suggestions);
             return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(json);
         } catch (Exception e) {
             log.error("[AI Summary] Failed to build JSON: {}", e.getMessage());
+            return "{}";
+        }
+    }
+
+    // ==================== Category Classification ====================
+
+    /**
+     * Parse pre-summary result: "摘要文本\n分类: xxx" format.
+     * Returns map with keys "summary" and "category".
+     */
+    private Map<String, String> parsePreSummaryResult(String raw) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (raw == null || raw.isEmpty()) {
+            result.put("summary", "");
+            result.put("category", "其他");
+            return result;
+        }
+        String[] lines = raw.split("\n");
+        StringBuilder summaryBuilder = new StringBuilder();
+        String category = "其他";
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("分类:") || trimmed.startsWith("分类：")) {
+                String cat = trimmed.replaceFirst("^分类[:：]\\s*", "").trim();
+                if (isValidCategory(cat)) {
+                    category = cat;
+                }
+            } else if (!trimmed.isEmpty()) {
+                if (summaryBuilder.length() > 0) summaryBuilder.append("\n");
+                summaryBuilder.append(trimmed);
+            }
+        }
+        result.put("summary", summaryBuilder.toString().trim());
+        result.put("category", category);
+        return result;
+    }
+
+    /**
+     * Check if category is a valid predefined category.
+     */
+    private boolean isValidCategory(String category) {
+        if (category == null || category.isEmpty()) return false;
+        for (String c : EVENT_CATEGORIES) {
+            if (c.equals(category)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Fallback keyword-based classification when DB category is empty.
+     */
+    private String classifyByKeywords(String text) {
+        if (text == null || text.isEmpty()) return "其他";
+        String[][] categoryKeywords = {
+            {"军事", "军演", "导弹", "军舰", "战机", "武器", "国防", "军队", "航母", "海军", "空军", "陆军"},
+            {"贸易", "关税", "进出口", "制裁", "出口", "进口", "贸易战", "贸易壁垒"},
+            {"外交", "大使", "会晤", "峰会", "协议", "条约", "联合国", "访问", "会谈"},
+            {"科技", "芯片", "半导体", "AI", "人工智能", "5G", "量子", "技术", "研发", "专利"},
+            {"人权", "自由", "民主", "维权", "抗议", "言论", "新闻自由"},
+            {"社会", "民生", "教育", "医疗", "就业", "房价", "疫情", "灾害"},
+            {"经济", "GDP", "通胀", "利率", "股市", "汇率", "增长", "衰退"},
+            {"政治", "选举", "政党", "议会", "政府", "政策", "改革", "执政"},
+            {"台海", "台湾", "台海", "两岸", "统一", "台独"},
+            {"港澳", "香港", "澳门", "港独", "一国两制"},
+            {"南海", "南海", "南沙", "岛礁", "航行自由"},
+            {"网络安全", "黑客", "网络攻击", "数据泄露", "网络安全"},
+            {"军售", "军售", "武器出口", "军火"},
+            {"制裁", "制裁", "禁令", "黑名单"},
+            {"能源", "石油", "天然气", "能源", "新能源", "碳排放"},
+            {"环境", "环境", "气候", "碳中和", "污染"},
+            {"金融", "金融", "银行", "投资", "资本"},
+            {"移民", "移民", "难民", "签证", "边境"},
+            {"教育", "教育", "高校", "科研", "学术"}
+        };
+        for (String[] ck : categoryKeywords) {
+            for (int i = 0; i < ck.length; i++) {
+                if (text.contains(ck[i])) {
+                    return ck[0];
+                }
+            }
+        }
+        return "其他";
+    }
+
+    /**
+     * Build categoryCounts JSON string from category stats.
+     */
+    private String buildCategoryCountsJson(Map<String, Object> categories) {
+        try {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> cats = (List<Map<String, Object>>) categories.get("categories");
+            Map<String, Integer> counts = new LinkedHashMap<>();
+            if (cats != null) {
+                for (Map<String, Object> cat : cats) {
+                    counts.put(str(cat.get("name")), intVal(cat.get("count")));
+                }
+            }
+            return mapper.writeValueAsString(counts);
+        } catch (Exception e) {
             return "{}";
         }
     }
