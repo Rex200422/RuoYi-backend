@@ -1205,7 +1205,7 @@ public class AiSummaryGenerator {
                     counts.put(str(cat.get("name")), intVal(cat.get("count")));
                 }
             }
-            return counts.toString();
+            return mapper.writeValueAsString(counts);
         } catch (Exception e) {
             return "{}";
         }
