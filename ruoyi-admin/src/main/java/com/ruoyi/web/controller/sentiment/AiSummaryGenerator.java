@@ -164,12 +164,13 @@ public class AiSummaryGenerator {
             String riskLevel = riskFromTrend != null ? riskFromTrend : extractRisk(llmOutput);
             String riskReason = extractRiskReason(llmOutput);
             List<String> suggestions = extractSuggestions(llmOutput);
+            String change = extractChange(llmOutput);
 
             log.info("[AI Summary] Title: {}", title);
             log.info("[AI Summary] Risk: {} - {}", riskLevel, riskReason);
 
             // ---- Build structured JSON output ----
-            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, riskReason, categories, stats, trends, suggestions, categoryCounts);
+            String jsonContent = buildStructuredJson(title, summaryText, riskLevel, riskReason, change, categories, stats, trends, suggestions);
 
             saveSummary(title, jsonContent, riskLevel, now, newsCount, postCount, genSeconds, categoryCounts);
             log.info("[AI Summary] === V5 Done (structured JSON) ===");
@@ -190,7 +191,7 @@ public class AiSummaryGenerator {
      */
     private List<Map<String, Object>> fetchPosts(LocalDateTime now) {
         String sql = "SELECT post_id, title, author, site_name, like_count, comment_count, "
-            + "content, pre_summary, trigger_keyword, crawl_time, category FROM social_post "
+            + "content, pre_summary, trigger_keyword, crawl_time, category, heat FROM social_post "
             + "WHERE crawl_time > ? ORDER BY like_count DESC, crawl_time DESC LIMIT ?";
 
         LocalDateTime cutoff = now.minusHours(POST_DATA_HOURS);
@@ -355,6 +356,17 @@ public class AiSummaryGenerator {
                 item.put("_pre_summary", parsed.get("summary"));
                 item.put("_category", parsed.get("category"));
             }
+            // 计算热度 = 点赞 + 评论数*2 + 所有评论的点赞之和
+            int likes = intVal(item.get("like_count"));
+            int commentCount = intVal(item.get("comment_count"));
+            int commentLikes = 0;
+            String postPid = str(item.get("post_id"));
+            List<Map<String, Object>> postComments = commentsByPost.getOrDefault(postPid, Collections.emptyList());
+            for (Map<String, Object> c : postComments) {
+                commentLikes += intVal(c.get("comment_likes"));
+            }
+            int heat = likes + commentCount * 2 + commentLikes;
+            item.put("heat", heat);
         }
         if (processed > 0) {
             log.info("[AI Summary] Pre-summarized {} {} items with {}", processed, type, PRE_SUMMARY_MODEL);
@@ -417,44 +429,45 @@ public class AiSummaryGenerator {
                                      List<Map<String, Object>> comments,
                                      List<Map<String, Object>> news) {
         StringBuilder sb = new StringBuilder();
-        int usedTokens = 0;
+        int totalBudget = SAFE_TOKENS; // 28800
 
+        // 1. 前次摘要（优先保留）
         Map<String, List<Map<String, Object>>> commentsByPost = new LinkedHashMap<>();
         for (Map<String, Object> c : comments) {
             String pid = str(c.get("post_id"));
             commentsByPost.computeIfAbsent(pid, k -> new ArrayList<>()).add(c);
         }
 
-        // ---- Posts + Comments section ----
+        // 2. 新闻摘要（优先级第二）
+        int newsTokens = 0;
+        if (!news.isEmpty()) {
+            sb.append("=== 新闻资讯 ===\n");
+            for (Map<String, Object> n : news) {
+                String item = formatNews(n);
+                int t = estimateTokens(item);
+                if (newsTokens + t > totalBudget) break;
+                sb.append(item).append("\n");
+                newsTokens += t;
+            }
+        }
+        totalBudget -= newsTokens;
+
+        // 3. 社交媒体摘要（优先级第三，按热度降序）
         if (!posts.isEmpty()) {
-            sb.append("=== 社交帖子与评论 ===\n");
-            int postTokens = 0;
+            // 按热度降序排列
+            posts.sort((a, b) -> intVal(b.get("heat")) - intVal(a.get("heat")));
+
+            sb.append("\n=== 社交帖子（按热度排序） ===\n");
             for (Map<String, Object> p : posts) {
                 String pid = str(p.get("post_id"));
                 List<Map<String, Object>> postComments = commentsByPost.getOrDefault(pid, Collections.emptyList());
                 String block = buildPostBlock(p, postComments);
                 int blockTokens = estimateTokens(block);
-                if (postTokens + blockTokens > POST_BUDGET) break;
+                if (blockTokens > totalBudget) break;
                 sb.append(block).append("\n");
-                postTokens += blockTokens;
+                totalBudget -= blockTokens;
             }
-            usedTokens += postTokens;
         }
-
-        // ---- News section ----
-        if (!news.isEmpty()) {
-            sb.append("\n=== 新闻文章 ===\n");
-            int newsTokens = 0;
-            for (Map<String, Object> n : news) {
-                String item = formatNews(n);
-                int t = estimateTokens(item);
-                if (newsTokens + t > NEWS_BUDGET) break;
-                sb.append(item).append("\n");
-                newsTokens += t;
-            }
-            usedTokens += newsTokens;
-        }
-
         return sb.toString();
     }
 
@@ -462,26 +475,21 @@ public class AiSummaryGenerator {
         String site = str(post.get("site_name"));
         String author = str(post.get("author"));
         String title = str(post.get("title"));
-        int likes = intVal(post.get("like_count"));
-        int commentCount = intVal(post.get("comment_count"));
+        int heat = intVal(post.get("heat"));
         String keyword = str(post.get("trigger_keyword"));
+        String cat = str(post.get("category"));
 
         String content;
         Object preSummary = post.get("_pre_summary");
-        if (preSummary != null) {
-            content = str(preSummary);
-        } else {
-            content = str(post.get("content"));
-        }
+        content = preSummary != null ? str(preSummary) : str(post.get("content"));
 
         StringBuilder sb = new StringBuilder();
         sb.append("[").append(site).append("] @").append(author).append(": ").append(title).append("\n");
-        sb.append("互动: ").append(likes).append("赞 ").append(commentCount)
-          .append("评 | 关键词: ").append(keyword).append("\n");
+        sb.append("热度: ").append(heat).append(" | 分类: ").append(cat).append(" | 关键词: ").append(keyword).append("\n");
         if (!content.isEmpty() && !content.equals(title)) {
             sb.append("内容: ").append(content).append("\n");
         }
-
+        // 评论部分保持不变
         if (!comments.isEmpty()) {
             sb.append("  热门评论:\n");
             int idx = 1;
@@ -528,32 +536,38 @@ public class AiSummaryGenerator {
       * V5: Short prompt - only asks 27B to generate a brief summary (3-5 sentences).
       * Structured data (categories, stats, trends) are extracted by Java code.
       */
-     private String buildSummaryPrompt(int newsCount, int postCount, int commentCount,
-                                Map<String, Object> prevSummary, String dataSection) {
-         StringBuilder sb = new StringBuilder();
+    private String buildSummaryPrompt(int newsCount, int postCount, int commentCount,
+                               Map<String, Object> prevSummary, String dataSection) {
+        StringBuilder sb = new StringBuilder();
+        String prevSection = buildPrevSection(prevSummary);
 
-         String prevSection = buildPrevSection(prevSummary);
-
-         sb.append("请根据以下舆情数据，用3-5句话写一段核心摘要，概括最重要的事件、趋势和风险。\n");
-         sb.append("同时给出一个简短标题（一句话）和风险评级（低/中/高）。\n\n");
-         sb.append("数据概览：").append(newsCount).append("条新闻，").append(postCount).append("条社交帖子。\n");
-         if (!prevSection.isEmpty()) {
-             sb.append(prevSection).append("\n");
-         }
-         sb.append("\n数据内容：\n");
-         sb.append(dataSection).append("\n\n");
-         sb.append("请按以下格式输出（每项一行）：\n");
-         sb.append("TITLE: 标题\n");
-         sb.append("RISK: 高/中/低\n");
-         sb.append("REASON: 风险评级的具体原因（一句话）\n");
-         sb.append("SUMMARY: 3-5句核心摘要\n");
-         sb.append("SUGGESTION1: 建议1\n");
-         sb.append("SUGGESTION2: 建议2\n");
-         sb.append("SUGGESTION3: 建议3\n");
-         sb.append("\n请用中文输出，严格按上述格式。");
-
-         return sb.toString();
-     }
+        sb.append("请根据以下舆情数据，生成一份简短的舆情分析报告。\n\n");
+        sb.append("要求：\n");
+        sb.append("1. 用3-5句话写核心摘要，概括最重要的事件、趋势和风险\n");
+        sb.append("2. 给出简短标题（一句话）\n");
+        sb.append("3. 给出风险评级（低/中/高）及具体原因\n");
+        if (!prevSection.isEmpty()) {
+            sb.append("4. 与上次简报对比，说明本次的主要变化（新增了什么重要议题、风险趋势如何变化）\n\n");
+            sb.append(prevSection).append("\n\n");
+        } else {
+            sb.append("\n");
+        }
+        sb.append("数据概览：").append(newsCount).append("条新闻，").append(postCount).append("条社交帖子。\n\n");
+        sb.append("数据内容：\n");
+        sb.append(dataSection).append("\n\n");
+        sb.append("请按以下格式输出（每项一行）：\n");
+        sb.append("TITLE: 标题\n");
+        sb.append("RISK: 高/中/低\n");
+        sb.append("REASON: 风险评级的具体原因（一句话）\n");
+        sb.append("SUMMARY: 3-5句核心摘要\n");
+        sb.append("CHANGE: 与上次简报的主要变化（1-2句话）\n");
+        sb.append("SUGGESTION1: 建议1\n");
+        sb.append("SUGGESTION2: 建议2\n");
+        sb.append("SUGGESTION3: 建议3\n");
+        sb.append("\n请用中文输出，严格按上述格式。\n");
+        sb.append("分类只能是以下之一，不能使用其他分类：").append(String.join("、", EVENT_CATEGORIES)).append("\n");
+        return sb.toString();
+    }
 
     private String buildPrevSection(Map<String, Object> prev) {
         if (prev == null) return "";
@@ -734,8 +748,8 @@ public class AiSummaryGenerator {
                     String category = str(p.get("_category"));
                     if (category.isEmpty()) category = "其他";
                     jdbc.update(
-                        "UPDATE social_post SET pre_summary = ?, category = ? WHERE post_id = ? AND (pre_summary IS NULL OR pre_summary = '')",
-                        str(pre), category, str(p.get("post_id"))
+                        "UPDATE social_post SET pre_summary = ?, category = ?, heat = ? WHERE post_id = ? AND (pre_summary IS NULL OR pre_summary = '')",
+                        str(pre), category, intVal(p.get("heat")), str(p.get("post_id"))
                     );
                     saved++;
                 } catch (Exception e) {
@@ -803,6 +817,20 @@ public class AiSummaryGenerator {
             }
         }
         return suggestions;
+    }
+
+    /**
+     * Extract change text from LLM output (CHANGE: line).
+     */
+    private String extractChange(String content) {
+        String[] lines = content.split("\n");
+        for (String line : lines) {
+            if (line.trim().toUpperCase().startsWith("CHANGE:")) {
+                String change = line.substring(line.indexOf(':') + 1).trim();
+                if (!change.isEmpty()) return change;
+            }
+        }
+        return "";
     }
 
     /**
@@ -1052,17 +1080,19 @@ public class AiSummaryGenerator {
      * Build the final structured JSON content string.
      */
     private String buildStructuredJson(String title, String summaryText, String riskLevel, String riskReason,
-                                        Map<String, Object> categories, Map<String, Object> stats,
-                                        Map<String, Object> trends, List<String> suggestions,
-                                        String categoryCounts) {
+                                    String change, Map<String, Object> categories, Map<String, Object> stats,
+                                    Map<String, Object> trends, List<String> suggestions) {
         try {
             Map<String, Object> json = new LinkedHashMap<>();
             json.put("title", title);
             json.put("risk_level", riskLevel);
             json.put("risk_reason", riskReason);
             json.put("summary", summaryText);
+            if (change != null && !change.isEmpty()) {
+                json.put("change", change);
+            }
             json.put("categories", categories.get("categories"));
-            json.put("category_counts", categoryCounts);
+            json.put("category_counts", buildCategoryCountsJson(categories));
             json.put("stats", stats);
             json.put("trends", trends);
             json.put("suggestions", suggestions);
