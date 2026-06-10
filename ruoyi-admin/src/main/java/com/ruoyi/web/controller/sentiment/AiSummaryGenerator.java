@@ -980,7 +980,7 @@ public class AiSummaryGenerator {
         for (Map<String, Object> row : recentSummaries) {
             LocalDateTime summaryTime = parseDateTime(row.get("create_time"));
             if (summaryTime == null) continue;
-            timeLabels.add(summaryTime.format(DateTimeFormatter.ofPattern("MM-dd HH")));
+            timeLabels.add(summaryTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
 
             String categoryCountsStr = str(row.get("category_counts"));
             if (categoryCountsStr.isEmpty()) continue;
@@ -997,7 +997,7 @@ public class AiSummaryGenerator {
         }
 
         // Step 2: Add current batch as the latest point
-        timeLabels.add(now.format(DateTimeFormatter.ofPattern("MM-dd HH")));
+        timeLabels.add(now.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
         int currentIdx = timeLabels.size() - 1;
 
         // Count current batch categories
