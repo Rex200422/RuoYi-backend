@@ -83,12 +83,15 @@ public class AiSummaryGenerator {
     public boolean generate(int hours) {
         log.info("[AI Summary] === Starting report generation (V5 JSON) ===");
 
+        LocalDateTime now = LocalDateTime.now();
+
         if (!checkOllama()) {
-            log.warn("[AI Summary] Ollama unavailable, skipping");
+            String reason = "Ollama 服务不可达（502或连接失败），无法生成简报";
+            log.warn("[AI Summary] {}", reason);
+            saveSkippedSummary(now, 0, 0, reason);
             return false;
         }
 
-        LocalDateTime now = LocalDateTime.now();
         try {
             // ---- Fixed-window data fetch ----
             List<Map<String, Object>> posts = fetchPosts(now);
@@ -282,19 +285,24 @@ public class AiSummaryGenerator {
         return false;
     }
 
-    private void saveSkippedSummary(LocalDateTime now, int postCount, int newsCount) {
-        String content = "Skipped. Posts: " + postCount + " (none fresh), "
-            + "News: " + newsCount + " (none fresh). "
-            + "No new data within time windows. Time: "
-            + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+    private void saveSkippedSummary(LocalDateTime now, int postCount, int newsCount, String reason) {
+        String title = reason != null ? "跳过 - " + reason : "跳过 - 无可用数据";
+        String content = "状态: 跳过\n"
+            + "原因: " + (reason != null ? reason : "无新鲜数据") + "\n"
+            + "帖子数: " + postCount + "，新闻数: " + newsCount + "\n"
+            + "时间: " + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
         jdbc.update(
             "INSERT INTO ai_summary (summary_type, title, content, risk_level, "
             + "data_start, data_end, news_count, social_count, model_name, generate_time) "
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            "skipped", "Skipped - insufficient fresh data", content, "low",
+            "skipped", title, content, "low",
             java.sql.Timestamp.valueOf(now), java.sql.Timestamp.valueOf(now),
             newsCount, postCount, GENERATION_MODEL, 0
         );
+    }
+
+    private void saveSkippedSummary(LocalDateTime now, int postCount, int newsCount) {
+        saveSkippedSummary(now, postCount, newsCount, null);
     }
 
     // ==================== Pre-summarization (qwen3.5 4b) ====================
@@ -612,7 +620,7 @@ public class AiSummaryGenerator {
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             return resp.statusCode() == 200;
         } catch (Exception e) {
-            log.warn("[AI Summary] Ollama connection failed: {}", e.getMessage());
+            log.warn("[AI Summary] Ollama connection failed: {} ({})", e.getMessage(), e.getClass().getSimpleName());
             return false;
         }
     }
