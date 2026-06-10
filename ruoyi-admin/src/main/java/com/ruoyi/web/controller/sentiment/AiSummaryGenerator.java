@@ -385,19 +385,25 @@ public class AiSummaryGenerator {
         String catList = String.join("、", EVENT_CATEGORIES);
         String prompt;
         if ("news".equals(type)) {
-            prompt = "请为以下新闻生成150字以内的核心摘要，并给出分类。\n"
-                + "分类必须是以下之一：" + catList + "\n"
-                + "请按以下格式输出（两行）：\n"
-                + "摘要文本\n"
-                + "分类: xxx\n\n"
-                + fullContext;
+            prompt = "请为以下新闻生成100字以内的核心摘要。\n"
+                + "最后一行必须输出分类标签。可选分类：" + catList + "\n"
+                + "严格按以下格式输出（仅两行，不要多余内容）：\n"
+                + "第一行：摘要文本（不要包含分类字样）\n"
+                + "第二行：分类: 以上可选分类中的一个\n\n"
+                + "示例：\n"
+                + "中国商务部宣布对欧盟进口猪肉征收反倾销税，影响全球肉类贸易格局。\n"
+                + "分类: 贸易\n\n"
+                + "以下是待分析内容：\n\n" + fullContext;
         } else {
-            prompt = "请为以下帖子生成100字以内的核心摘要，并给出分类。\n"
-                + "分类必须是以下之一：" + catList + "\n"
-                + "请按以下格式输出（两行）：\n"
-                + "摘要文本\n"
-                + "分类: xxx\n\n"
-                + fullContext;
+            prompt = "请为以下帖子生成80字以内的核心摘要。\n"
+                + "最后一行必须输出分类标签。可选分类：" + catList + "\n"
+                + "严格按以下格式输出（仅两行，不要多余内容）：\n"
+                + "第一行：摘要文本（不要包含分类字样）\n"
+                + "第二行：分类: 以上可选分类中的一个\n\n"
+                + "示例：\n"
+                + "博主讨论台湾半导体产业现状及大陆芯片制裁影响。\n"
+                + "分类: 科技\n\n"
+                + "以下是待分析内容：\n\n" + fullContext;
         }
 
         try {
@@ -407,7 +413,7 @@ public class AiSummaryGenerator {
             body.put("think", false);
             body.put("messages", List.of(
                 Map.of("role", "system", "content",
-                    "你是一个文本摘要和分类助手。请用简洁的中文概括以下内容的核心要点，并给出正确的分类。直接输出摘要和分类，不要思考过程。"),
+                    "你是摘要和分类助手。严格按格式输出：第一行摘要，第二行分类标签。分类只能是提供的选项之一。不要输出其他内容。"),
                 Map.of("role", "user", "content", prompt)
             ));
             body.put("stream", false);
@@ -1165,22 +1171,34 @@ public class AiSummaryGenerator {
             result.put("category", "其他");
             return result;
         }
-        String[] lines = raw.split("\n");
-        StringBuilder summaryBuilder = new StringBuilder();
+
         String category = "其他";
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("分类:") || trimmed.startsWith("分类：")) {
-                String cat = trimmed.replaceFirst("^分类[:：]\\s*", "").trim();
-                if (isValidCategory(cat)) {
-                    category = cat;
-                }
-            } else if (!trimmed.isEmpty()) {
-                if (summaryBuilder.length() > 0) summaryBuilder.append("\n");
-                summaryBuilder.append(trimmed);
+
+        // Step 1: Try to extract category using multiple patterns
+        // Pattern A: "分类: xxx" or "分类：xxx" (standalone or inline)
+        String catPattern = "分类[:：]\\s*([^\\s,，。；]+)";
+        java.util.regex.Matcher catMatcher = java.util.regex.Pattern.compile(catPattern).matcher(raw);
+        if (catMatcher.find()) {
+            String cat = catMatcher.group(1).trim();
+            // Remove trailing punctuation
+            cat = cat.replaceAll("[。；，,\\s]+$", "");
+            if (isValidCategory(cat)) {
+                category = cat;
             }
         }
-        result.put("summary", summaryBuilder.toString().trim());
+
+        // Step 2: Extract summary text (remove the "分类: xxx" line/pattern)
+        String summary = raw;
+        // Remove "分类: xxx" pattern from the text (handles both standalone and inline)
+        summary = summary.replaceAll("(?m)^分类[:：]\\s*[^\\s，。；]+[。；]?\\s*$", "");
+        summary = summary.replaceAll("分类[:：]\\s*[^\\s，。；]+[。；]?\\s*$", "");
+        // Remove common prefixes
+        summary = summary.replaceAll("^(摘要|摘要文本|总结)[：:]\\s*", "");
+        summary = summary.replaceAll("^摘要：", "");
+        // Clean up extra whitespace
+        summary = summary.replaceAll("\\n{3,}", "\n\n").trim();
+
+        result.put("summary", summary);
         result.put("category", category);
         return result;
     }
