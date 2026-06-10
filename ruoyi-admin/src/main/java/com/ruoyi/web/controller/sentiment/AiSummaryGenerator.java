@@ -965,55 +965,44 @@ public class AiSummaryGenerator {
     private Map<String, Object> extractTrends(List<Map<String, Object>> posts, List<Map<String, Object>> news, LocalDateTime now) {
         Map<String, Object> trends = new LinkedHashMap<>();
 
-        // Generate time labels (6h intervals for last 48h = 8 points)
-        List<String> timeLabels = new ArrayList<>();
-        for (int i = 7; i >= 0; i--) {
-            LocalDateTime t = now.minusHours(i * 6);
-            timeLabels.add(t.format(DateTimeFormatter.ofPattern("MM-dd HH")));
-        }
-        trends.put("time_labels", timeLabels);
-
-        // Initialize time series for all categories
-        Map<String, int[]> categoryTimeSeries = new LinkedHashMap<>();
-        for (String cat : EVENT_CATEGORIES) {
-            categoryTimeSeries.put(cat, new int[8]);
-        }
-
-        // Step 1: Load historical category_counts from ai_summary table
+        // Step 1: Load historical summaries with category_counts from DB
         List<Map<String, Object>> recentSummaries = jdbc.queryForList(
-            "SELECT category_counts, create_time FROM ai_summary "
+            "SELECT category_counts, create_time, risk_level FROM ai_summary "
             + "WHERE summary_type = 'hourly' AND category_counts IS NOT NULL "
-            + "ORDER BY id DESC LIMIT 12"
+            + "ORDER BY create_time ASC LIMIT 12"
         );
-        // Reverse so oldest first, then process oldest-to-newest
-        Collections.reverse(recentSummaries);
+
+        // Build time labels and data from actual summary timestamps
+        List<String> timeLabels = new ArrayList<>();
+        Map<String, int[]> categoryTimeSeries = new LinkedHashMap<>();
+        int pointCount = recentSummaries.size();
+
         for (Map<String, Object> row : recentSummaries) {
             LocalDateTime summaryTime = parseDateTime(row.get("create_time"));
             if (summaryTime == null) continue;
-            int bucket = getBucketIndex(summaryTime, now);
-            if (bucket < 0 || bucket >= 8) continue;
+            timeLabels.add(summaryTime.format(DateTimeFormatter.ofPattern("MM-dd HH")));
 
             String categoryCountsStr = str(row.get("category_counts"));
             if (categoryCountsStr.isEmpty()) continue;
             try {
                 Map<String, Object> counts = mapper.readValue(categoryCountsStr, Map.class);
+                int idx = timeLabels.size() - 1;
                 for (Map.Entry<String, Object> entry : counts.entrySet()) {
                     String cat = entry.getKey();
                     int count = entry.getValue() instanceof Number ? ((Number) entry.getValue()).intValue() : 0;
-                    int[] series = categoryTimeSeries.get(cat);
-                    if (series == null) series = categoryTimeSeries.computeIfAbsent(cat, k -> new int[8]);
-                    series[bucket] = count;  // Use last value for this bucket (most recent summary)
+                    int[] series = categoryTimeSeries.computeIfAbsent(cat, k -> new int[pointCount]);
+                    if (idx < series.length) series[idx] = count;
                 }
             } catch (Exception ignored) {}
         }
 
-        // Step 2: Override current bucket with real-time counts from posts
-        for (Map<String, Object> post : posts) {
-            LocalDateTime crawlTime = parseDateTime(post.get("crawl_time"));
-            if (crawlTime == null) continue;
-            int bucket = getBucketIndex(crawlTime, now);
-            if (bucket < 0 || bucket >= 8) continue;
+        // Step 2: Add current batch as the latest point
+        timeLabels.add(now.format(DateTimeFormatter.ofPattern("MM-dd HH")));
+        int currentIdx = timeLabels.size() - 1;
 
+        // Count current batch categories
+        Map<String, Integer> currentCounts = new LinkedHashMap<>();
+        for (Map<String, Object> post : posts) {
             String category = str(post.get("category"));
             if (category.isEmpty()) {
                 String combined = str(post.get("trigger_keyword")) + " " + str(post.get("title"));
@@ -1021,21 +1010,9 @@ public class AiSummaryGenerator {
                 if (!preSummary.isEmpty()) combined += " " + preSummary;
                 category = classifyByKeywords(combined);
             }
-            int[] series = categoryTimeSeries.get(category);
-            if (series != null) {
-                series[bucket]++;
-            } else {
-                categoryTimeSeries.computeIfAbsent("其他", k -> new int[8])[bucket]++;
-            }
+            currentCounts.merge(category, 1, Integer::sum);
         }
-
-        // Step 3: Override current bucket with real-time counts from news
         for (Map<String, Object> n : news) {
-            LocalDateTime crawlTime = parseDateTime(n.get("crawl_time"));
-            if (crawlTime == null) continue;
-            int bucket = getBucketIndex(crawlTime, now);
-            if (bucket < 0 || bucket >= 8) continue;
-
             String category = str(n.get("category"));
             if (category.isEmpty()) {
                 String combined = str(n.get("keywords")) + " " + str(n.get("title"));
@@ -1043,31 +1020,30 @@ public class AiSummaryGenerator {
                 if (!preSummary.isEmpty()) combined += " " + preSummary;
                 category = classifyByKeywords(combined);
             }
-            int[] series = categoryTimeSeries.get(category);
-            if (series != null) {
-                series[bucket]++;
-            } else {
-                categoryTimeSeries.computeIfAbsent("其他", k -> new int[8])[bucket]++;
-            }
+            currentCounts.merge(category, 1, Integer::sum);
+        }
+        for (Map.Entry<String, Integer> entry : currentCounts.entrySet()) {
+            int[] series = categoryTimeSeries.computeIfAbsent(entry.getKey(), k -> new int[timeLabels.size()]);
+            if (currentIdx < series.length) series[currentIdx] = entry.getValue();
         }
 
-        // Build category_trends
+        trends.put("time_labels", timeLabels);
+
+        // Build category_trends (only categories with data)
         Map<String, List<Integer>> categoryTrends = new LinkedHashMap<>();
         for (Map.Entry<String, int[]> entry : categoryTimeSeries.entrySet()) {
             int total = 0;
             for (int v : entry.getValue()) total += v;
             if (total > 0) {
                 List<Integer> values = new ArrayList<>();
-                for (int v : entry.getValue()) {
-                    values.add(v);
-                }
+                for (int v : entry.getValue()) values.add(v);
                 categoryTrends.put(entry.getKey(), values);
             }
         }
         trends.put("category_trends", categoryTrends);
 
-        // Fetch recent risk trends from DB (last 8 summaries)
-        List<String> riskTrend = fetchRecentRiskTrends(8);
+        // Fetch recent risk trends from DB (last N summaries)
+        List<String> riskTrend = fetchRecentRiskTrends(Math.min(pointCount + 1, 12));
         trends.put("risk_trend", riskTrend);
 
         return trends;
@@ -1076,12 +1052,6 @@ public class AiSummaryGenerator {
     /**
      * Get time bucket index: 0=oldest, 7=newest (6h buckets over 48h)
      */
-    private int getBucketIndex(LocalDateTime crawlTime, LocalDateTime now) {
-        long hoursAgo = java.time.Duration.between(crawlTime, now).toHours();
-        if (hoursAgo < 0) hoursAgo = 0;
-        int bucket = 7 - (int)(hoursAgo / 6);
-        return Math.max(0, Math.min(7, bucket));
-    }
 
     /**
      * Fetch recent risk levels from DB for trend display.
