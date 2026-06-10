@@ -100,7 +100,8 @@ def save_news_article(cursor, article):
         publish_date=VALUES(publish_date),
         keywords=VALUES(keywords),
         cover_image=VALUES(cover_image),
-        content=VALUES(content)"""  # 插入或更新新闻文章，基于url去重
+        content=VALUES(content),
+        crawl_time=NOW()"""  # 插入或更新新闻文章（更新crawl_time）
     cursor.execute(sql, (
         article["title"],
         article["url"],
@@ -158,7 +159,8 @@ def save_social_post(cursor, post):
         comment_count=VALUES(comment_count),
         title=VALUES(title),
         content=VALUES(content),
-        image_url=VALUES(image_url)"""  # 插入或更新社交帖子，基于post_id去重
+        image_url=VALUES(image_url),
+        crawl_time=NOW()"""  # 插入或更新社交帖子，基于post_id去重（更新crawl_time）
     cursor.execute(sql, (
         post["uuid"],
         post["site_name"],
