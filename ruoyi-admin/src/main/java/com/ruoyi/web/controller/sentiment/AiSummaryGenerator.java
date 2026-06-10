@@ -855,9 +855,10 @@ public class AiSummaryGenerator {
         for (Map<String, Object> post : posts) {
             String category = str(post.get("category"));
             if (category.isEmpty()) {
-                category = classifyByKeywords(
-                    str(post.get("trigger_keyword")) + " " + str(post.get("title"))
-                );
+                String combined = str(post.get("trigger_keyword")) + " " + str(post.get("title"));
+                String preSummary = str(post.get("pre_summary"));
+                if (!preSummary.isEmpty()) combined += " " + preSummary;
+                category = classifyByKeywords(combined);
             }
             categoryCount.merge(category, 1, Integer::sum);
             categoryEvents.computeIfAbsent(category, k -> new ArrayList<>());
@@ -870,9 +871,10 @@ public class AiSummaryGenerator {
         for (Map<String, Object> n : news) {
             String category = str(n.get("category"));
             if (category.isEmpty()) {
-                category = classifyByKeywords(
-                    str(n.get("keywords")) + " " + str(n.get("title"))
-                );
+                String combined = str(n.get("keywords")) + " " + str(n.get("title"));
+                String preSummary = str(n.get("pre_summary"));
+                if (!preSummary.isEmpty()) combined += " " + preSummary;
+                category = classifyByKeywords(combined);
             }
             categoryCount.merge(category, 1, Integer::sum);
             categoryEvents.computeIfAbsent(category, k -> new ArrayList<>());
@@ -971,7 +973,35 @@ public class AiSummaryGenerator {
             categoryTimeSeries.put(cat, new int[8]);
         }
 
-        // Count posts per time bucket
+        // Step 1: Load historical category_counts from ai_summary table
+        List<Map<String, Object>> recentSummaries = jdbc.queryForList(
+            "SELECT category_counts, create_time FROM ai_summary "
+            + "WHERE summary_type = 'hourly' AND category_counts IS NOT NULL "
+            + "ORDER BY id DESC LIMIT 12"
+        );
+        // Reverse so oldest first, then process oldest-to-newest
+        Collections.reverse(recentSummaries);
+        for (Map<String, Object> row : recentSummaries) {
+            LocalDateTime summaryTime = parseDateTime(row.get("create_time"));
+            if (summaryTime == null) continue;
+            int bucket = getBucketIndex(summaryTime, now);
+            if (bucket < 0 || bucket >= 8) continue;
+
+            String categoryCountsStr = str(row.get("category_counts"));
+            if (categoryCountsStr.isEmpty()) continue;
+            try {
+                Map<String, Object> counts = mapper.readValue(categoryCountsStr, Map.class);
+                for (Map.Entry<String, Object> entry : counts.entrySet()) {
+                    String cat = entry.getKey();
+                    int count = entry.getValue() instanceof Number ? ((Number) entry.getValue()).intValue() : 0;
+                    int[] series = categoryTimeSeries.get(cat);
+                    if (series == null) series = categoryTimeSeries.computeIfAbsent(cat, k -> new int[8]);
+                    series[bucket] = count;  // Use last value for this bucket (most recent summary)
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // Step 2: Override current bucket with real-time counts from posts
         for (Map<String, Object> post : posts) {
             LocalDateTime crawlTime = parseDateTime(post.get("crawl_time"));
             if (crawlTime == null) continue;
@@ -980,9 +1010,10 @@ public class AiSummaryGenerator {
 
             String category = str(post.get("category"));
             if (category.isEmpty()) {
-                category = classifyByKeywords(
-                    str(post.get("trigger_keyword")) + " " + str(post.get("title"))
-                );
+                String combined = str(post.get("trigger_keyword")) + " " + str(post.get("title"));
+                String preSummary = str(post.get("pre_summary"));
+                if (!preSummary.isEmpty()) combined += " " + preSummary;
+                category = classifyByKeywords(combined);
             }
             int[] series = categoryTimeSeries.get(category);
             if (series != null) {
@@ -992,7 +1023,7 @@ public class AiSummaryGenerator {
             }
         }
 
-        // Count news per time bucket
+        // Step 3: Override current bucket with real-time counts from news
         for (Map<String, Object> n : news) {
             LocalDateTime crawlTime = parseDateTime(n.get("crawl_time"));
             if (crawlTime == null) continue;
@@ -1001,9 +1032,10 @@ public class AiSummaryGenerator {
 
             String category = str(n.get("category"));
             if (category.isEmpty()) {
-                category = classifyByKeywords(
-                    str(n.get("keywords")) + " " + str(n.get("title"))
-                );
+                String combined = str(n.get("keywords")) + " " + str(n.get("title"));
+                String preSummary = str(n.get("pre_summary"));
+                if (!preSummary.isEmpty()) combined += " " + preSummary;
+                category = classifyByKeywords(combined);
             }
             int[] series = categoryTimeSeries.get(category);
             if (series != null) {
@@ -1163,36 +1195,65 @@ public class AiSummaryGenerator {
         }
         return false;
     }
-
     /**
      * Fallback keyword-based classification when DB category is empty.
+     * Case-insensitive matching with expanded keyword coverage.
      */
     private String classifyByKeywords(String text) {
         if (text == null || text.isEmpty()) return "其他";
+        String lower = text.toLowerCase();
         String[][] categoryKeywords = {
-            {"军事", "军演", "导弹", "军舰", "战机", "武器", "国防", "军队", "航母", "海军", "空军", "陆军"},
-            {"贸易", "关税", "进出口", "制裁", "出口", "进口", "贸易战", "贸易壁垒"},
-            {"外交", "大使", "会晤", "峰会", "协议", "条约", "联合国", "访问", "会谈"},
-            {"科技", "芯片", "半导体", "AI", "人工智能", "5G", "量子", "技术", "研发", "专利"},
-            {"人权", "自由", "民主", "维权", "抗议", "言论", "新闻自由"},
-            {"社会", "民生", "教育", "医疗", "就业", "房价", "疫情", "灾害"},
-            {"经济", "GDP", "通胀", "利率", "股市", "汇率", "增长", "衰退"},
-            {"政治", "选举", "政党", "议会", "政府", "政策", "改革", "执政"},
-            {"台海", "台湾", "台海", "两岸", "统一", "台独"},
-            {"港澳", "香港", "澳门", "港独", "一国两制"},
-            {"南海", "南海", "南沙", "岛礁", "航行自由"},
-            {"网络安全", "黑客", "网络攻击", "数据泄露", "网络安全"},
-            {"军售", "军售", "武器出口", "军火"},
-            {"制裁", "制裁", "禁令", "黑名单"},
-            {"能源", "石油", "天然气", "能源", "新能源", "碳排放"},
-            {"环境", "环境", "气候", "碳中和", "污染"},
-            {"金融", "金融", "银行", "投资", "资本"},
-            {"移民", "移民", "难民", "签证", "边境"},
-            {"教育", "教育", "高校", "科研", "学术"}
+            {"台海", "台湾", "台海", "两岸", "统一", "台独", "taiwan", "strait", "Taipei", "台湾海峡", "Taiwan strait"},
+            {"港澳", "香港", "澳门", "hong kong", "macau", "港独", "一国两制", "国安法", "HK"},
+            {"南海", "南海", "南沙", "岛礁", "航行自由", "south china sea", "九段线", "spratly", "paracel", "scs"},
+            {"军事", "军演", "导弹", "军舰", "战机", "武器", "国防", "军队", "航母", "海军", "空军", "陆军",
+             "military", "missile", "warship", "fighter", "weapon", "defense", "army", "navy", "air force",
+             "drone", "warfare", "combat", "troops", "ammunition", "artillery", "bomber", "submarine", "aircraft carrier",
+             "PLA", "Pentagon", "NATO", "AUKUS", "甲板", "演习", "部署"},
+            {"贸易", "关税", "进出口", "制裁", "出口", "进口", "贸易战", "贸易壁垒", "贸易协定",
+             "tariff", "trade", "sanction", "export", "import", "embargo", "quota", "customs",
+             "supply chain", "supply-chain", "商品", "关税", "关税壁垒"},
+            {"外交", "大使", "会晤", "峰会", "协议", "条约", "联合国", "访问", "会谈", "谈判",
+             "diplomat", "embassy", "summit", "treaty", "bilateral", "un",
+             "ambassador", "negotiate", "dialogue", "state visit"},
+            {"科技", "芯片", "半导体", "ai", "人工智能", "5g", "量子", "技术", "研发", "专利",
+             "semiconductor", "artificial intelligence", "quantum", "robot", "autonomous",
+             "spacex", "rocket", "satellite", "太空", "航天", "space", "芯片", "半导体",
+             "cyber", "cybersecurity", "hacker", "数据", "网络"},
+            {"人权", "自由", "民主", "维权", "抗议", "言论", "新闻自由", "人权", "政治犯",
+             "human right", "freedom", "democracy", "protest", "dissent",
+             "detain", "prison", "activist", "censorship", "surveillance",
+             "unrest", "civil liberty", "维权", "自由", "民主"},
+            {"社会", "民生", "教育", "医疗", "就业", "房价", "疫情", "灾害", "事故",
+             "pandemic", "covid", "flood", "earthquake", "fire",
+             "social", "society", "culture", "community", "人口", "犯罪"},
+            {"经济", "gdp", "通胀", "利率", "股市", "汇率", "增长", "衰退",
+             "inflation", "recession", "economy", "economic", "financial crisis",
+             "unemployment", "consumer", "retail", "经济", "财政"},
+            {"政治", "选举", "政党", "议会", "政府", "政策", "改革", "执政",
+             "election", "parliament", "congress", "senate", "party", "vote",
+             "legislation", "impeach", "referendum", "political", "法案", "总统", "国会"},
+            {"网络安全", "网络攻击", "数据泄露", "黑客", "网络安全", "间谍",
+             "cyber attack", "data breach", "hack", "espionage", "spy",
+             "phishing", "malware", "ransomware", "infosec", "网络安全"},
+            {"军售", "军售", "武器销售", "军火", "arms sale", "defense sale", "武器出口",
+             "arms deal", "weapons transfer", "arms sale"},
+            {"制裁", "制裁", "禁令", "黑名单", "sanctions", "entity list", "出口管制",
+             "trade ban", "blacklist"},
+            {"能源", "石油", "天然气", "核能", "新能源", "oil", "gas", "nuclear",
+             "solar", "wind", "petroleum", "crude", "能源", "核电", "煤炭", "coal"},
+            {"教育", "大学", "学术", "研究", "留学", "education", "university",
+             "academic", "campus", "student", "高校", "科研"},
+            {"环境", "气候", "碳排放", "环保", "污染", "climate", "environment",
+             "carbon", "emission", "pollution", "green", "碳中和", "环境"},
+            {"金融", "银行", "投资", "股市", "债券", "finance", "investment",
+             "stock", "bond", "fund", "capital market", "金融", "资本市场", "证券"},
+            {"移民", "移民", "签证", "难民", "immigration", "visa", "refugee",
+             "asylum", "border", "deportation", "边境"}
         };
         for (String[] ck : categoryKeywords) {
-            for (int i = 0; i < ck.length; i++) {
-                if (text.contains(ck[i])) {
+            for (int i = 1; i < ck.length; i++) {
+                if (lower.contains(ck[i].toLowerCase())) {
                     return ck[0];
                 }
             }
