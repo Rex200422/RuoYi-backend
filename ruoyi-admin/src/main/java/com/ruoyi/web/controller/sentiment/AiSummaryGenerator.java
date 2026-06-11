@@ -1047,52 +1047,43 @@ public class AiSummaryGenerator {
         trends.put("risk_trend", riskTrend);
 
         // Step 4: Build platform_trends (events per platform over time)
-        // Query DB for 6h-window platform counts, then add current batch
         List<String> platformTimeLabels = new ArrayList<>();
         Map<String, int[]> platformTimeSeries = new LinkedHashMap<>();
-        int platPointCount = 0;
+
+        // Build time labels (8 points, 6h intervals over 48h)
+        final int PLAT_BUCKETS = 8;
+        for (int i = PLAT_BUCKETS - 1; i >= 0; i--) {
+            platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
+        }
 
         try {
-            // Query historical platform counts in 6h buckets (last 48h = 8 buckets)
+            // Simple query: get all posts and news in 48h window
             List<Map<String, Object>> platformRows = jdbc.queryForList(
-                "SELECT site AS platform, bucket_idx, cnt FROM ("
-                + "  SELECT site_name AS site, FLOOR(TIMESTAMPDIFF(HOUR, crawl_time, ?) / 6) AS bucket_idx, COUNT(*) AS cnt"
-                + "  FROM social_post WHERE crawl_time > ? GROUP BY site, bucket_idx"
-                + "  UNION ALL"
-                + "  SELECT source AS site, FLOOR(TIMESTAMPDIFF(HOUR, crawl_time, ?) / 6) AS bucket_idx, COUNT(*) AS cnt"
-                + "  FROM news_article WHERE crawl_time > ? GROUP BY site, bucket_idx"
-                + ") t WHERE bucket_idx >= 0 AND bucket_idx < 8 ORDER BY bucket_idx ASC",
-                java.sql.Timestamp.valueOf(now),
+                "SELECT site_name AS platform, crawl_time FROM social_post WHERE crawl_time > ? "
+                + "UNION ALL "
+                + "SELECT source AS platform, crawl_time FROM news_article WHERE crawl_time > ?",
                 java.sql.Timestamp.valueOf(now.minusHours(48)),
-                java.sql.Timestamp.valueOf(now),
                 java.sql.Timestamp.valueOf(now.minusHours(48))
             );
-
-            // Build time labels from buckets
-            for (int i = 7; i >= 0; i--) {
-                platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
-            }
-            platPointCount = 8;
+            log.info("[AI Summary] Platform data rows: {}", platformRows.size());
 
             for (Map<String, Object> row : platformRows) {
                 String platform = str(row.get("platform"));
-                int bucket = row.get("bucket_idx") instanceof Number ? ((Number) row.get("bucket_idx")).intValue() : -1;
-                int cnt = row.get("cnt") instanceof Number ? ((Number) row.get("cnt")).intValue() : 0;
-                if (bucket < 0 || bucket >= 8 || platform.isEmpty()) continue;
-                int[] series = platformTimeSeries.computeIfAbsent(platform, k -> new int[8]);
-                series[bucket] = cnt;
+                if (platform.isEmpty()) continue;
+                LocalDateTime rowTime = parseDateTime(row.get("crawl_time"));
+                if (rowTime == null) continue;
+                long hoursAgo = java.time.Duration.between(rowTime, now).toHours();
+                int bucket = PLAT_BUCKETS - 1 - (int)(hoursAgo / 6);
+                bucket = Math.max(0, Math.min(PLAT_BUCKETS - 1, bucket));
+                int[] series = platformTimeSeries.computeIfAbsent(platform, k -> new int[PLAT_BUCKETS]);
+                series[bucket]++;
             }
         } catch (Exception e) {
-            log.warn("[AI Summary] Platform trends query failed: {}", e.getMessage());
-            // Fallback: just use current batch
-            for (int i = 7; i >= 0; i--) {
-                platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
-            }
-            platPointCount = 8;
+            log.warn("[AI Summary] Platform trends query failed: {} ({})", e.getMessage(), e.getClass().getSimpleName());
         }
 
         // Add current batch platform counts to the last bucket
-        final int platCount = platPointCount;
+        final int platCount = PLAT_BUCKETS;
         int platCurrentIdx = platCount - 1;
         for (Map<String, Object> post : posts) {
             String site = str(post.get("site_name"));
