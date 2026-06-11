@@ -125,12 +125,17 @@ public class CrawlScheduler {
         }
 
         String scriptPath = "/root/workspace/RuoYi-backend/crawlers/" + scriptFile;
-        String escapedKeyword = config.getKeyword().replace("\"", "\\\"");
+        String escapedKeyword = config.getKeyword();
         int maxResults = config.getMaxResults() != null ? config.getMaxResults() : 10;
 
+        // 创建日志目录并定义日志文件路径
+        String logDir = "/root/workspace/RuoYi-backend/crawlers/logs";
+        new java.io.File(logDir).mkdirs();
+        String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
+
         String command = String.format(
-            "python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d",
-            scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId()
+            "python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1 | tee %s",
+            scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId(), logFilePath
         );
 
         try {
