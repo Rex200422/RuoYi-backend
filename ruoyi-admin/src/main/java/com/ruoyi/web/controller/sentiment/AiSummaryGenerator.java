@@ -1057,13 +1057,11 @@ public class AiSummaryGenerator {
         }
 
         try {
-            // Simple query: get all posts and news in 48h window
+            // Simple query: get ALL posts and news (no time limit)
             List<Map<String, Object>> platformRows = jdbc.queryForList(
-                "SELECT site_name AS platform, crawl_time FROM social_post WHERE crawl_time > ? "
+                "SELECT site_name AS platform, crawl_time FROM social_post "
                 + "UNION ALL "
-                + "SELECT source AS platform, crawl_time FROM news_article WHERE crawl_time > ?",
-                java.sql.Timestamp.valueOf(now.minusHours(48)),
-                java.sql.Timestamp.valueOf(now.minusHours(48))
+                + "SELECT source AS platform, crawl_time FROM news_article"
             );
             log.info("[AI Summary] Platform data rows: {}", platformRows.size());
 

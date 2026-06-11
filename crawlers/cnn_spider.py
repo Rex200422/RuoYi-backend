@@ -7,7 +7,7 @@ from content_utils import clean_content_html
 from retry_utils import with_retry
 from proxy_config import PROXIES
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
-from crawler_config import DB, USER_AGENT
+from crawler_config import DB, USER_AGENT, ALL_KEYWORDS, extract_keywords
 from common_db import get_db
 
 HEADERS = {"User-Agent": USER_AGENT, "Referer": "https://edition.cnn.com/"}
@@ -51,9 +51,7 @@ def is_boilerplate(text):
 
 
 
-def extract_keywords(text):
-    t = text.lower()
-    return ",".join(sorted([k for k in ["china","taiwan","trade","technology","military","economy","politics","health","climate"] if re.search(rf"\b{k}\b", t)]))
+
 
 def get_article_content(url):
     """从CNN文章提取全文内容，保留段落格式"""

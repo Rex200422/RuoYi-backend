@@ -16,7 +16,7 @@ from content_utils import clean_content_html
 import requests
 from bs4 import BeautifulSoup
 from common_db import save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
-from crawler_config import DB, USER_AGENT
+from crawler_config import DB, USER_AGENT, MAIN_KEYWORDS, SUB_KEYWORDS, ALL_KEYWORDS, extract_keywords as extract_kw, contains_main_keyword as matches_main_keywords
 from common_db import get_db
 
 warnings.filterwarnings("ignore")
@@ -25,13 +25,6 @@ warnings.filterwarnings("ignore")
 from proxy_config import PROXIES, get_playwright_proxy
 from retry_utils import with_retry_goto
 HEADERS = {"User-Agent": USER_AGENT}
-
-MAIN_KEYWORDS = ["china", "taiwan"]
-SUB_KEYWORDS = [
-    "trade", "technology", "military", "sanctions",
-    "tariff", "investment", "financial",
-]
-ALL_KEYWORDS = MAIN_KEYWORDS + SUB_KEYWORDS
 
 DEFAULT_MAX_PAGES = 3
 DEFAULT_MAX_ARTICLES = 2
@@ -51,22 +44,6 @@ def strip_html_tags(html_str):
         return ""
     soup = BeautifulSoup(html_str, "html.parser")
     return clean(soup.get_text(" ", strip=True))
-
-
-def extract_kw(text):
-    """Return comma-separated matched keywords."""
-    t = text.lower()
-    return ",".join(sorted(
-        k for k in ALL_KEYWORDS
-        if re.search(rf"\b{k.replace('-', '[- ]')}\b", t)
-    ))
-
-
-def matches_main_keywords(title, content):
-    """Return True if title or content contains any main keyword."""
-    combined = (title + " " + content).lower()
-    return any(kw in combined for kw in MAIN_KEYWORDS)
-
 
 
 # --------------- extraction ---------------

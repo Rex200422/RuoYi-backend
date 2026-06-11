@@ -37,7 +37,7 @@ import time
 import requests
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from retry_utils import with_retry
-from crawler_config import DB, IMAGE_DIR
+from crawler_config import DB, IMAGE_DIR, ALL_KEYWORDS
 
 
 # ============================================================
@@ -48,7 +48,7 @@ from crawler_config import DB, IMAGE_DIR
 BSKY_USERNAME = os.environ.get("BSKY_USERNAME", "zao-17.bsky.social")
 BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD", "3ORI6-VJAFI")
 # 搜索关键词列表
-ALL_KEYWORDS = ["china", "taiwan"]
+
 # 关键词的显示名称（用于数据库记录）
 KEYWORD_DISPLAY = {"china": "China", "taiwan": "Taiwan", "trade": "Trade", "technology": "Technology",
                     "military": "Military", "sanctions": "Sanctions", "tariff": "Tariff",

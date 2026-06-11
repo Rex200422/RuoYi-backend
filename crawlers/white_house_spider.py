@@ -6,7 +6,8 @@ https://www.whitehouse.gov/news/
 使用TLSAdapter降级SSL安全级别以兼容白宫服务器。
 """
 import os, sys, re, time, random, argparse, hashlib
-from crawler_config import DB, IMAGE_DIR
+import crawler_config
+from crawler_config import DB, IMAGE_DIR, MAIN_KEYWORDS, SUB_KEYWORDS, ALL_KEYWORDS, extract_keywords, contains_main_keyword as contains_keywords
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 import requests as req_lib
 from bs4 import BeautifulSoup
@@ -22,12 +23,6 @@ SITE_NAME = "White House"                    # 站点名（写入 news_article.s
 BASE_URL = "https://www.whitehouse.gov"     # 列表页基础 URL
 DEFAULT_MAX_PAGES = 2                        # 列表页最多翻页数
 DEFAULT_MAX_ARTICLES = 2                     # 每次最多爬取文章数
-
-# 关键词：用于过滤相关文章
-MAIN_KEYWORDS = ["china", "taiwan"]
-SUB_KEYWORDS = ["trade", "technology", "military", "sanctions", "indo-pacific", "south china sea",
-                "semiconductor", "cyber", "beijing", "human rights", "xinjiang", "hong kong",
-                "uyghur", "tibet", "ccp"]
 
 
 # ============================================================
@@ -48,21 +43,6 @@ class TLSAdapter(HTTPAdapter):
 def clean(text):
     """清理文本中的多余空白字符"""
     return re.sub(r"\s+", " ", text).strip() if text else ""
-
-
-def extract_keywords(text):
-    """从文本中提取匹配的关键词列表"""
-    t = text.lower()
-    return ",".join(sorted(set(
-        k for k in MAIN_KEYWORDS + SUB_KEYWORDS
-        if re.search(rf"\b{re.escape(k)}\b", t)
-    )))
-
-
-def contains_keywords(text):
-    """检查文本是否包含主要关键词（用于过滤无关文章）"""
-    t = text.lower()
-    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in MAIN_KEYWORDS)
 
 
 def create_session():

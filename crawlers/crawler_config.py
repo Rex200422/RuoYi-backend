@@ -14,6 +14,7 @@ RuoYi 舆情爬虫 - 统一配置文件
     - 以下配置会自动生成 PROXIES 和 PLAYWRIGHT_PROXY，无需手动设置
 """
 import os
+import re
 
 
 # ============================================================
@@ -77,3 +78,38 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "  # Mac OS X系统
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"  # Chrome浏览器
 )
+
+# ============================================================
+# 关键词配置
+# ============================================================
+# MAIN_KEYWORDS: 主关键词，文章必须包含至少一个才被采集
+# SUB_KEYWORDS:  子关键词，用于标记文章分类，不要求必须匹配
+# 所有爬虫共用此配置，extract_keywords() 从文本中提取匹配的关键词。
+MAIN_KEYWORDS = [
+    "china", "taiwan",
+]
+SUB_KEYWORDS = [
+    "trade", "technology", "military", "sanctions", "indo-pacific",
+    "south china sea", "semiconductor", "cyber", "beijing", "human rights",
+    "xinjiang", "hong kong", "uyghur", "tibet", "ccp",
+]
+ALL_KEYWORDS = MAIN_KEYWORDS + SUB_KEYWORDS
+
+
+def extract_keywords(text):
+    """从文本中提取匹配的关键词，返回逗号分隔的去重排序结果。"""
+    if not text:
+        return ""
+    t = text.lower()
+    matched = sorted(set(
+        k for k in ALL_KEYWORDS if re.search(rf"\b{re.escape(k)}\b", t)
+    ))
+    return ",".join(matched)
+
+
+def contains_main_keyword(text):
+    """检查文本是否包含至少一个主关键词（china 或 taiwan）。"""
+    if not text:
+        return False
+    t = text.lower()
+    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in MAIN_KEYWORDS)

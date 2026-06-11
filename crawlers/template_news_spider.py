@@ -28,7 +28,8 @@ from bs4 import BeautifulSoup  # HTML解析库
 # ============================================================
 # 导入统一配置和工具模块
 # ============================================================
-from crawler_config import DB, IMAGE_DIR, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT
+import crawler_config
+from crawler_config import DB, IMAGE_DIR, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT, ALL_KEYWORDS, extract_keywords, contains_main_keyword
 from proxy_config import PROXIES
 HEADERS = {"User-Agent": USER_AGENT}
 from content_utils import clean_content_html, remove_boilerplate_text
@@ -46,7 +47,6 @@ from retry_utils import with_retry
 # ============================================================
 SITE_NAME = "YourSite"                       # 站点名（写入 news_article.source 字段）
 BASE_URL = "https://example.com/news"        # 列表页URL（爬虫从这里开始）
-KEYWORDS = ["china", "taiwan"]               # 关键词列表，用于过滤文章
 IMAGE_DIR = IMAGE_DIR                        # 图片目录（从 crawler_config 自动切换，一般无需修改）
 
 
@@ -65,40 +65,6 @@ def clean(text):
         str: 替换所有连续空白为单个空格后的文本
     """
     return re.sub(r"\s+", " ", text).strip() if text else ""  # \s+ 匹配一个或多个空白字符
-
-
-def extract_keywords(text):
-    """
-    从文本中提取匹配的关键词。
-
-    扫描文本，找出所有在 KEYWORDS 列表中出现的关键词，
-    返回逗号分隔的去重排序结果。
-
-    参数:
-        text (str): 待匹配的文本（会转为小写匹配）
-
-    返回值:
-        str: 逗号分隔的关键词，如 "china,taiwan"
-    """
-    t = text.lower()  # 转小写以便统一匹配
-    return ",".join(sorted(set(
-        k for k in KEYWORDS
-        if re.search(rf"\b{re.escape(k)}\b", t)  # \b 匹配单词边界，re.escape 避免关键词含特殊字符
-    )))
-
-
-def contains_main_keyword(text):
-    """
-    检查文本是否包含主关键词。
-
-    参数:
-        text (str): 待检查的文本（会转为小写匹配）
-
-    返回值:
-        bool: 如果文本中包含任意一个 KEYWORDS 中的关键词则返回 True
-    """
-    t = text.lower()  # 转小写以便统一匹配
-    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in KEYWORDS)  # \b 匹配单词边界
 
 
 # ===== 已写好，通常不需要修改 =====
@@ -371,11 +337,9 @@ def main():
       5. 成功时更新日志和配置
       6. 失败时记录错误信息
     """
-    global KEYWORDS
-    global KEYWORDS  # 声明使用全局变量
     args = parse_args()  # 解析命令行参数
     if args.keyword:  # 如果指定了关键词，覆盖默认值
-        KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
+        crawler_config.ALL_KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
     update_crawl_log_start(args.log_id)  # 记录开始时间
     try:
         found, new, updated = crawl(  # 执行爬虫

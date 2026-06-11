@@ -21,10 +21,11 @@ HRW (Human Rights Watch) 新闻爬虫 - Playwright 版
     python hrw_spider.py --max 5 --log-id 123
 """
 import os, sys, re, time, random, argparse
+import crawler_config
 from playwright.sync_api import sync_playwright
 from content_utils import extract_content_playwright, remove_boilerplate_text
 from common_db import get_db, save_news_article, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
-from crawler_config import DB, IMAGE_DIR
+from crawler_config import DB, IMAGE_DIR, MAIN_KEYWORDS, SUB_KEYWORDS, ALL_KEYWORDS, extract_keywords, contains_main_keyword as contains_keywords
 import hashlib, requests as req_lib
 from proxy_config import PROXIES, get_playwright_proxy
 from retry_utils import with_retry_goto
@@ -81,13 +82,6 @@ BASE_URL = "https://www.hrw.org"            # HRW 网站基础URL
 DEFAULT_MAX_PAGES = 2                       # 默认最大列表页数
 DEFAULT_MAX_ARTICLES = 2                    # 默认最大文章数
 
-# 主关键词（必须匹配至少一个才保存）
-MAIN_KEYWORDS = ["china", "taiwan"]
-# 子关键词（用于标记文章分类，不要求必须匹配）
-SUB_KEYWORDS = ["trade", "technology", "military", "sanctions", "indo-pacific", "south china sea",
-                "semiconductor", "cyber", "beijing", "human rights", "xinjiang", "hong kong",
-                "uyghur", "tibet", "ccp"]
-
 
 # ============================================================
 # 基础工具函数
@@ -96,37 +90,6 @@ SUB_KEYWORDS = ["trade", "technology", "military", "sanctions", "indo-pacific", 
 def clean(text):
     """清理文本中的多余空白"""
     return re.sub(r"\s+", " ", text).strip() if text else ""
-
-
-# ============================================================
-# 关键词工具
-# ============================================================
-
-def extract_keywords(text):
-    """
-    从文本中提取所有匹配的关键词（主关键词 + 子关键词）。
-
-    参数:
-        text (str): 待匹配的文本
-
-    返回值:
-        str: 逗号分隔的关键词
-    """
-    t = text.lower()
-    return ",".join(sorted(set(k for k in MAIN_KEYWORDS + SUB_KEYWORDS if re.search(rf"\b{re.escape(k)}\b", t))))
-
-def contains_keywords(text):
-    """
-    检查文本是否包含主关键词（china 或 taiwan）。
-
-    参数:
-        text (str): 待检查的文本
-
-    返回值:
-        bool: 包含主关键词返回 True
-    """
-    t = text.lower()
-    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in MAIN_KEYWORDS)
 
 
 # ============================================================

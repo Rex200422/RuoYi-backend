@@ -25,7 +25,7 @@ import requests  # HTTP请求库
 # ============================================================
 # 导入统一配置和工具模块
 # ============================================================
-from crawler_config import DB, IMAGE_DIR, MAX_PER_KEYWORD, REQUEST_DELAY
+from crawler_config import DB, IMAGE_DIR, MAX_PER_KEYWORD, REQUEST_DELAY, ALL_KEYWORDS, extract_keywords
 from proxy_config import PROXIES
 from common_db import (
     get_db, save_social_post, save_social_comment, save_social_post_image,
@@ -40,7 +40,6 @@ from retry_utils import with_retry
 # 站点配置 — 创建新爬虫时只需修改这里
 # ============================================================
 SITE_NAME = "YourSite"                       # 站点名（写入 social_post.site_name 字段）
-ALL_KEYWORDS = ["china", "taiwan"]           # 关键词列表，用于搜索帖子
 
 
 # ============================================================
@@ -58,26 +57,6 @@ def clean(text):
         str: 替换所有连续空白为单个空格后的文本
     """
     return re.sub(r"\s+", " ", text).strip() if text else ""  # \s+ 匹配一个或多个空白字符
-
-
-def extract_keywords(text):
-    """
-    从文本中提取匹配的关键词。
-
-    扫描文本，找出所有在 ALL_KEYWORDS 列表中出现的关键词，
-    返回逗号分隔的去重排序结果。
-
-    参数:
-        text (str): 待匹配的文本（会转为小写匹配）
-
-    返回值:
-        str: 逗号分隔的关键词，如 "china,taiwan"
-    """
-    t = text.lower()  # 转小写以便统一匹配
-    return ",".join(sorted(set(
-        k for k in ALL_KEYWORDS
-        if re.search(rf"\b{re.escape(k)}\b", t)  # \b 匹配单词边界，re.escape 避免关键词含特殊字符
-    )))
 
 
 # ===== 已写好，通常不需要修改 =====

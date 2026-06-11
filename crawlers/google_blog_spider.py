@@ -25,7 +25,8 @@ from bs4 import BeautifulSoup  # HTML解析库
 # ============================================================
 # 导入统一配置和工具模块
 # ============================================================
-from crawler_config import DB, IMAGE_DIR, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT
+import crawler_config
+from crawler_config import DB, IMAGE_DIR, MAX_ARTICLES, MAX_PAGES, REQUEST_TIMEOUT, REQUEST_DELAY, USER_AGENT, ALL_KEYWORDS, extract_keywords, contains_main_keyword
 from proxy_config import PROXIES
 
 HEADERS = {"User-Agent": USER_AGENT}
@@ -43,11 +44,6 @@ from retry_utils import with_retry
 # ============================================================
 SITE_NAME = "Google Blog"                                       # 站点名（写入 news_article.source 字段）
 SITEMAP_URL = "https://blog.google/en-us/sitemap.xml"           # Google Blog 站点地图URL
-KEYWORDS = [                                                    # 关键词列表，用于过滤文章
-    "china", "taiwan", "trade", "technology", "military",
-    "sanctions", "semiconductor", "cyber", "ai",
-    "machine learning", "cloud", "privacy", "security",
-]
 IMAGE_DIR = IMAGE_DIR  # 图片目录（从 crawler_config 自动切换，一般无需修改）
 
 # XML 命名空间（站点地图标准格式）
@@ -63,25 +59,6 @@ def clean(text):
     清理文本中的多余空白字符。
     """
     return re.sub(r"\s+", " ", text).strip() if text else ""
-
-
-def extract_keywords(text):
-    """
-    从文本中提取匹配的关键词。
-    返回逗号分隔的去重排序结果。
-    """
-    t = text.lower()
-    return ",".join(sorted(set(
-        k for k in KEYWORDS if re.search(rf"\b{re.escape(k)}\b", t)
-    )))
-
-
-def contains_main_keyword(text):
-    """
-    检查文本是否包含主关键词。
-    """
-    t = text.lower()
-    return any(re.search(rf"\b{re.escape(k)}\b", t) for k in KEYWORDS)
 
 
 # ============================================================
@@ -401,10 +378,9 @@ def main():
     """
     主函数：解析参数 → 执行爬虫 → 更新日志。
     """
-    global KEYWORDS
     args = parse_args()
     if args.keyword:
-        KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
+        crawler_config.ALL_KEYWORDS = [kw.strip() for kw in args.keyword.split(",") if kw.strip()]
     update_crawl_log_start(args.log_id)
     try:
         found, new, updated = crawl(
