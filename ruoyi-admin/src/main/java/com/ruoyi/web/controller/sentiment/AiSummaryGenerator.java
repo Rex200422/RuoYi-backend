@@ -1096,15 +1096,20 @@ public class AiSummaryGenerator {
             if (platCurrentIdx < series.length) series[platCurrentIdx]++;
         }
 
-        // Build platform_trends output
+        // Build platform_trends output (cumulative - each point = total events up to that time)
         Map<String, List<Integer>> platformTrends = new LinkedHashMap<>();
         for (Map.Entry<String, int[]> entry : platformTimeSeries.entrySet()) {
+            int[] series = entry.getValue();
             int total = 0;
-            for (int v : entry.getValue()) total += v;
+            for (int v : series) total += v;
             if (total > 0) {
-                List<Integer> values = new ArrayList<>();
-                for (int v : entry.getValue()) values.add(v);
-                platformTrends.put(entry.getKey(), values);
+                List<Integer> cumulative = new ArrayList<>();
+                int sum = 0;
+                for (int v : series) {
+                    sum += v;
+                    cumulative.add(sum);
+                }
+                platformTrends.put(entry.getKey(), cumulative);
             }
         }
         trends.put("platform_trends", platformTrends);
