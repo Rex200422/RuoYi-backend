@@ -1057,18 +1057,18 @@ public class AiSummaryGenerator {
         }
 
         try {
-            // Simple query: get ALL posts and news (no time limit)
+            // Simple query: use publish_time/publish_date (not crawl_time which gets updated on re-crawl)
             List<Map<String, Object>> platformRows = jdbc.queryForList(
-                "SELECT site_name AS platform, crawl_time FROM social_post "
+                "SELECT site_name AS platform, publish_time AS pub_time FROM social_post WHERE publish_time IS NOT NULL AND publish_time != '' "
                 + "UNION ALL "
-                + "SELECT source AS platform, crawl_time FROM news_article"
+                + "SELECT source AS platform, publish_date AS pub_time FROM news_article WHERE publish_date IS NOT NULL"
             );
             log.info("[AI Summary] Platform data rows: {}", platformRows.size());
 
             for (Map<String, Object> row : platformRows) {
                 String platform = str(row.get("platform"));
                 if (platform.isEmpty()) continue;
-                LocalDateTime rowTime = parseDateTime(row.get("crawl_time"));
+                LocalDateTime rowTime = parseDateTime(row.get("pub_time"));
                 if (rowTime == null) continue;
                 long hoursAgo = java.time.Duration.between(rowTime, now).toHours();
                 int bucket = PLAT_BUCKETS - 1 - (int)(hoursAgo / 6);
