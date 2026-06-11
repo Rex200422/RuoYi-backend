@@ -1046,6 +1046,81 @@ public class AiSummaryGenerator {
         List<String> riskTrend = fetchRecentRiskTrends(Math.min(pointCount + 1, 12));
         trends.put("risk_trend", riskTrend);
 
+        // Step 4: Build platform_trends (events per platform over time)
+        // Query DB for 6h-window platform counts, then add current batch
+        List<String> platformTimeLabels = new ArrayList<>();
+        Map<String, int[]> platformTimeSeries = new LinkedHashMap<>();
+        int platPointCount = 0;
+
+        try {
+            // Query historical platform counts in 6h buckets (last 48h = 8 buckets)
+            List<Map<String, Object>> platformRows = jdbc.queryForList(
+                "SELECT site AS platform, bucket_idx, cnt FROM ("
+                + "  SELECT site_name AS site, FLOOR(TIMESTAMPDIFF(HOUR, crawl_time, ?) / 6) AS bucket_idx, COUNT(*) AS cnt"
+                + "  FROM social_post WHERE crawl_time > ? GROUP BY site, bucket_idx"
+                + "  UNION ALL"
+                + "  SELECT source AS site, FLOOR(TIMESTAMPDIFF(HOUR, crawl_time, ?) / 6) AS bucket_idx, COUNT(*) AS cnt"
+                + "  FROM news_article WHERE crawl_time > ? GROUP BY site, bucket_idx"
+                + ") t WHERE bucket_idx >= 0 AND bucket_idx < 8 ORDER BY bucket_idx ASC",
+                java.sql.Timestamp.valueOf(now),
+                java.sql.Timestamp.valueOf(now.minusHours(48)),
+                java.sql.Timestamp.valueOf(now),
+                java.sql.Timestamp.valueOf(now.minusHours(48))
+            );
+
+            // Build time labels from buckets
+            for (int i = 7; i >= 0; i--) {
+                platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
+            }
+            platPointCount = 8;
+
+            for (Map<String, Object> row : platformRows) {
+                String platform = str(row.get("platform"));
+                int bucket = row.get("bucket_idx") instanceof Number ? ((Number) row.get("bucket_idx")).intValue() : -1;
+                int cnt = row.get("cnt") instanceof Number ? ((Number) row.get("cnt")).intValue() : 0;
+                if (bucket < 0 || bucket >= 8 || platform.isEmpty()) continue;
+                int[] series = platformTimeSeries.computeIfAbsent(platform, k -> new int[8]);
+                series[bucket] = cnt;
+            }
+        } catch (Exception e) {
+            log.warn("[AI Summary] Platform trends query failed: {}", e.getMessage());
+            // Fallback: just use current batch
+            for (int i = 7; i >= 0; i--) {
+                platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
+            }
+            platPointCount = 8;
+        }
+
+        // Add current batch platform counts to the last bucket
+        final int platCount = platPointCount;
+        int platCurrentIdx = platCount - 1;
+        for (Map<String, Object> post : posts) {
+            String site = str(post.get("site_name"));
+            if (site.isEmpty()) continue;
+            int[] series = platformTimeSeries.computeIfAbsent(site, k -> new int[platCount]);
+            if (platCurrentIdx < series.length) series[platCurrentIdx]++;
+        }
+        for (Map<String, Object> n : news) {
+            String source = str(n.get("source"));
+            if (source.isEmpty()) continue;
+            int[] series = platformTimeSeries.computeIfAbsent(source, k -> new int[platCount]);
+            if (platCurrentIdx < series.length) series[platCurrentIdx]++;
+        }
+
+        // Build platform_trends output
+        Map<String, List<Integer>> platformTrends = new LinkedHashMap<>();
+        for (Map.Entry<String, int[]> entry : platformTimeSeries.entrySet()) {
+            int total = 0;
+            for (int v : entry.getValue()) total += v;
+            if (total > 0) {
+                List<Integer> values = new ArrayList<>();
+                for (int v : entry.getValue()) values.add(v);
+                platformTrends.put(entry.getKey(), values);
+            }
+        }
+        trends.put("platform_trends", platformTrends);
+        trends.put("platform_time_labels", platformTimeLabels);
+
         return trends;
     }
 
