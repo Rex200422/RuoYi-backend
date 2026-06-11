@@ -965,169 +965,89 @@ public class AiSummaryGenerator {
     private Map<String, Object> extractTrends(List<Map<String, Object>> posts, List<Map<String, Object>> news, LocalDateTime now) {
         Map<String, Object> trends = new LinkedHashMap<>();
 
-        // Step 1: Load historical summaries with category_counts from DB
-        List<Map<String, Object>> recentSummaries = jdbc.queryForList(
-            "SELECT category_counts, create_time, risk_level FROM ai_summary "
-            + "WHERE summary_type = 'hourly' AND category_counts IS NOT NULL "
-            + "ORDER BY create_time ASC LIMIT 12"
-        );
-
-        // Build time labels and data from actual summary timestamps
-        List<String> timeLabels = new ArrayList<>();
-        Map<String, int[]> categoryTimeSeries = new LinkedHashMap<>();
-        int pointCount = recentSummaries.size();
-
-        for (Map<String, Object> row : recentSummaries) {
-            LocalDateTime summaryTime = parseDateTime(row.get("create_time"));
-            if (summaryTime == null) continue;
-            timeLabels.add(summaryTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
-
-            String categoryCountsStr = str(row.get("category_counts"));
-            if (categoryCountsStr.isEmpty()) continue;
-            try {
-                Map<String, Object> counts = mapper.readValue(categoryCountsStr, Map.class);
-                int idx = timeLabels.size() - 1;
-                for (Map.Entry<String, Object> entry : counts.entrySet()) {
-                    String cat = entry.getKey();
-                    int count = entry.getValue() instanceof Number ? ((Number) entry.getValue()).intValue() : 0;
-                    int[] series = categoryTimeSeries.computeIfAbsent(cat, k -> new int[pointCount]);
-                    if (idx < series.length) series[idx] = count;
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // Step 2: Add current batch as the latest point
-        timeLabels.add(now.format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
-        int currentIdx = timeLabels.size() - 1;
-
-        // Count current batch categories
-        Map<String, Integer> currentCounts = new LinkedHashMap<>();
-        for (Map<String, Object> post : posts) {
-            String category = str(post.get("category"));
-            if (category.isEmpty()) {
-                String combined = str(post.get("trigger_keyword")) + " " + str(post.get("title"));
-                String preSummary = str(post.get("pre_summary"));
-                if (!preSummary.isEmpty()) combined += " " + preSummary;
-                category = classifyByKeywords(combined);
-            }
-            currentCounts.merge(category, 1, Integer::sum);
-        }
-        for (Map<String, Object> n : news) {
-            String category = str(n.get("category"));
-            if (category.isEmpty()) {
-                String combined = str(n.get("keywords")) + " " + str(n.get("title"));
-                String preSummary = str(n.get("pre_summary"));
-                if (!preSummary.isEmpty()) combined += " " + preSummary;
-                category = classifyByKeywords(combined);
-            }
-            currentCounts.merge(category, 1, Integer::sum);
-        }
-        for (Map.Entry<String, Integer> entry : currentCounts.entrySet()) {
-            int[] series = categoryTimeSeries.computeIfAbsent(entry.getKey(), k -> new int[timeLabels.size()]);
-            if (currentIdx < series.length) series[currentIdx] = entry.getValue();
-        }
-
-        trends.put("time_labels", timeLabels);
-
-        // Build category_trends (only categories with data)
-        Map<String, List<Integer>> categoryTrends = new LinkedHashMap<>();
-        for (Map.Entry<String, int[]> entry : categoryTimeSeries.entrySet()) {
-            int total = 0;
-            for (int v : entry.getValue()) total += v;
-            if (total > 0) {
-                List<Integer> values = new ArrayList<>();
-                for (int v : entry.getValue()) values.add(v);
-                categoryTrends.put(entry.getKey(), values);
-            }
-        }
-        trends.put("category_trends", categoryTrends);
-
-        // Fetch recent risk trends from DB (last N summaries)
-        List<String> riskTrend = fetchRecentRiskTrends(Math.min(pointCount + 1, 12));
-        trends.put("risk_trend", riskTrend);
-
-        // Step 4: Build platform_trends (events per platform over time)
-        List<String> platformTimeLabels = new ArrayList<>();
-        Map<String, int[]> platformTimeSeries = new LinkedHashMap<>();
-
-        // Build time labels (8 points, 6h intervals over 48h)
-        final int PLAT_BUCKETS = 8;
-        for (int i = PLAT_BUCKETS - 1; i >= 0; i--) {
-            platformTimeLabels.add(now.minusHours(i * 6).format(DateTimeFormatter.ofPattern("MM-dd HH:mm")));
-        }
-
         try {
-            // Simple query: use publish_time/publish_date (not crawl_time which gets updated on re-crawl)
-            List<Map<String, Object>> platformRows = jdbc.queryForList(
-                "SELECT site_name AS platform, publish_time AS pub_time FROM social_post WHERE publish_time IS NOT NULL AND publish_time != '' "
-                + "UNION ALL "
-                + "SELECT source AS platform, publish_date AS pub_time FROM news_article WHERE publish_date IS NOT NULL"
+            // ===== 1. 分类趋势：从 category_trend 表读取 =====
+            List<Map<String, Object>> catRows = jdbc.queryForList(
+                "SELECT record_time, category, event_count FROM category_trend "
+                + "ORDER BY record_time ASC"
             );
-            log.info("[AI Summary] Platform data rows: {}", platformRows.size());
-
-            for (Map<String, Object> row : platformRows) {
-                String platform = str(row.get("platform"));
-                if (platform.isEmpty()) continue;
-                LocalDateTime rowTime = parseDateTime(row.get("pub_time"));
-                if (rowTime == null) continue;
-                long hoursAgo = java.time.Duration.between(rowTime, now).toHours();
-                int bucket = PLAT_BUCKETS - 1 - (int)(hoursAgo / 6);
-                bucket = Math.max(0, Math.min(PLAT_BUCKETS - 1, bucket));
-                int[] series = platformTimeSeries.computeIfAbsent(platform, k -> new int[PLAT_BUCKETS]);
-                series[bucket]++;
+            // 按record_time去重，取最近12个时间点
+            LinkedHashMap<String, Map<String, Integer>> catByTime = new LinkedHashMap<>();
+            for (Map<String, Object> row : catRows) {
+                LocalDateTime rt = parseDateTime(row.get("record_time"));
+                if (rt == null) continue;
+                String timeKey = rt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                String category = str(row.get("category"));
+                int count = row.get("event_count") instanceof Number ? ((Number) row.get("event_count")).intValue() : 0;
+                catByTime.computeIfAbsent(timeKey, k -> new LinkedHashMap<>()).put(category, count);
             }
-        } catch (Exception e) {
-            log.warn("[AI Summary] Platform trends query failed: {} ({})", e.getMessage(), e.getClass().getSimpleName());
-        }
-
-        // Add current batch platform counts to the last bucket
-        final int platCount = PLAT_BUCKETS;
-        int platCurrentIdx = platCount - 1;
-        for (Map<String, Object> post : posts) {
-            String site = str(post.get("site_name"));
-            if (site.isEmpty()) continue;
-            int[] series = platformTimeSeries.computeIfAbsent(site, k -> new int[platCount]);
-            if (platCurrentIdx < series.length) series[platCurrentIdx]++;
-        }
-        for (Map<String, Object> n : news) {
-            String source = str(n.get("source"));
-            if (source.isEmpty()) continue;
-            int[] series = platformTimeSeries.computeIfAbsent(source, k -> new int[platCount]);
-            if (platCurrentIdx < series.length) series[platCurrentIdx]++;
-        }
-
-        // Build platform_trends output (cumulative - each point = total events up to that time)
-        Map<String, List<Integer>> platformTrends = new LinkedHashMap<>();
-        Map<String, Integer> platformCounts = new LinkedHashMap<>();
-        for (Map.Entry<String, int[]> entry : platformTimeSeries.entrySet()) {
-            int[] series = entry.getValue();
-            int total = 0;
-            for (int v : series) total += v;
-            if (total > 0) {
-                platformCounts.put(entry.getKey(), total);
-                List<Integer> cumulative = new ArrayList<>();
-                int sum = 0;
-                for (int v : series) {
-                    sum += v;
-                    cumulative.add(sum);
+            // 取最近12个时间点
+            List<String> catTimeLabels = new ArrayList<>(catByTime.keySet());
+            if (catTimeLabels.size() > 12) {
+                catTimeLabels = catTimeLabels.subList(catTimeLabels.size() - 12, catTimeLabels.size());
+            }
+            Map<String, List<Integer>> categoryTrends = new LinkedHashMap<>();
+            // 收集所有分类
+            Set<String> allCats = new LinkedHashSet<>();
+            for (String tk : catTimeLabels) {
+                allCats.addAll(catByTime.getOrDefault(tk, Collections.emptyMap()).keySet());
+            }
+            // 为每个分类构建时间序列
+            for (String cat : allCats) {
+                List<Integer> values = new ArrayList<>();
+                for (String tk : catTimeLabels) {
+                    Map<String, Integer> timeData = catByTime.getOrDefault(tk, Collections.emptyMap());
+                    values.add(timeData.getOrDefault(cat, 0));
                 }
-                platformTrends.put(entry.getKey(), cumulative);
+                categoryTrends.put(cat, values);
             }
+            trends.put("time_labels", catTimeLabels);
+            trends.put("category_trends", categoryTrends);
+
+            // ===== 2. 平台趋势：从 platform_trend 表读取（累计值） =====
+            List<Map<String, Object>> platRows = jdbc.queryForList(
+                "SELECT record_time, platform, event_count FROM platform_trend "
+                + "ORDER BY record_time ASC"
+            );
+            LinkedHashMap<String, Map<String, Integer>> platByTime = new LinkedHashMap<>();
+            for (Map<String, Object> row : platRows) {
+                LocalDateTime rt = parseDateTime(row.get("record_time"));
+                if (rt == null) continue;
+                String timeKey = rt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"));
+                String platform = str(row.get("platform"));
+                int count = row.get("event_count") instanceof Number ? ((Number) row.get("event_count")).intValue() : 0;
+                platByTime.computeIfAbsent(timeKey, k -> new LinkedHashMap<>()).put(platform, count);
+            }
+            List<String> platTimeLabels = new ArrayList<>(platByTime.keySet());
+            if (platTimeLabels.size() > 12) {
+                platTimeLabels = platTimeLabels.subList(platTimeLabels.size() - 12, platTimeLabels.size());
+            }
+            Map<String, List<Integer>> platformTrends = new LinkedHashMap<>();
+            Set<String> allPlatforms = new LinkedHashSet<>();
+            for (String tk : platTimeLabels) {
+                allPlatforms.addAll(platByTime.getOrDefault(tk, Collections.emptyMap()).keySet());
+            }
+            for (String plat : allPlatforms) {
+                List<Integer> values = new ArrayList<>();
+                for (String tk : platTimeLabels) {
+                    Map<String, Integer> timeData = platByTime.getOrDefault(tk, Collections.emptyMap());
+                    values.add(timeData.getOrDefault(plat, 0));
+                }
+                platformTrends.put(plat, values);
+            }
+            trends.put("platform_trends", platformTrends);
+            trends.put("platform_time_labels", platTimeLabels);
+
+            // ===== 3. 风险趋势：从最近简报读取 =====
+            List<String> riskTrend = fetchRecentRiskTrends(12);
+            trends.put("risk_trend", riskTrend);
+
+        } catch (Exception e) {
+            log.warn("[AI Summary] Trends query failed: {} ({})", e.getMessage(), e.getClass().getSimpleName());
         }
-        trends.put("platform_trends", platformTrends);
-        trends.put("platform_time_labels", platformTimeLabels);
-        trends.put("platform_counts", platformCounts);
 
         return trends;
     }
-
-    /**
-     * Get time bucket index: 0=oldest, 7=newest (6h buckets over 48h)
-     */
-
-    /**
-     * Fetch recent risk levels from DB for trend display.
-     */
     private List<String> fetchRecentRiskTrends(int count) {
         List<String> risks = new ArrayList<>();
         try {
