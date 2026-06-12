@@ -329,7 +329,7 @@ def crawl(keywords, max_per_kw):
             display_kw = KEYWORD_DISPLAY.get(kw, kw)
             print(f"\n--- 搜索: {kw} ---")
             # 调用 Bluesky API 搜索帖子
-            result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw*6, "sort": "latest"}), description=f"搜索帖子{kw}")
+            result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw * 10, "sort": "latest"}), description=f"搜索帖子{kw}")
 
             # 按媒体类型排序：有图片的帖子优先（embed.images > embed.external.thumb > 无图）
             def has_media(post):

@@ -1,0 +1,72 @@
+
+==================================================
+  Google Blog Spider  max=10  pages=3
+==================================================
+  [LIST] 站点地图: https://blog.google/en-us/sitemap.xml
+
+  收集到 30 篇文章
+
+  [1] https://blog.google/innovation-and-ai/products/gemini-app/gemini-features-for-bu
+    [SKIP] 无关键词
+  [2] https://blog.google/innovation-and-ai/technology/safety-security/combatting-ai-s
+    [IMG] 5e57d288dcfcc796_0.jpg (131520 bytes)
+    [NEW] +1
+  [3] https://blog.google/innovation-and-ai/infrastructure-and-cloud/global-network/vi
+    [SKIP] 缺少 article 或 h1 标签
+  [4] https://blog.google/company-news/outreach-and-initiatives/arts-culture/50-new-di
+    [SKIP] 无关键词
+  [5] https://blog.google/company-news/outreach-and-initiatives/google-org/skilled-tra
+    [SKIP] 无关键词
+  [6] https://blog.google/products/marketingplatform/360/
+    [SKIP] 无关键词
+  [7] https://blog.google/products/marketingplatform/360/walmart-connect/
+    [SKIP] 缺少 article 或 h1 标签
+  [8] https://blog.google/products/ads-commerce/dsa-upgrade-to-ai-max-2026/
+    [SKIP] 无关键词
+  [9] https://blog.google/products/ads-commerce/new-real-estate-ads-formats/
+    [SKIP] 缺少 article 或 h1 标签
+  [10] https://blog.google/innovation-and-ai/technology/developers-tools/diffusion-gemm
+    [SKIP] 无关键词
+  [11] https://blog.google/company-news/inside-google/around-the-globe/google-europe/un
+    [SKIP] 无关键词
+  [12] https://blog.google/company-news/inside-google/around-the-globe/google-europe/un
+    [SKIP] 缺少 article 或 h1 标签
+  [13] https://blog.google/company-news/inside-google/around-the-globe/google-europe/un
+    [SKIP] 无关键词
+  [14] https://blog.google/company-news/inside-google/around-the-globe/google-europe/un
+    [SKIP] 无关键词
+  [15] https://blog.google/company-news/inside-google/around-the-globe/google-latin-ame
+    [SKIP] 无关键词
+  [16] https://blog.google/company-news/outreach-and-initiatives/arts-culture/see-in-cm
+    [SKIP] 无关键词
+  [17] https://blog.google/products-and-platforms/products/chrome/chrome-expands-latin-
+    [SKIP] 缺少 article 或 h1 标签
+  [18] https://blog.google/products-and-platforms/products/search/gardening-tips/
+    [SKIP] 无关键词
+  [19] https://blog.google/products-and-platforms/products/search/nba-finals-trends-202
+    [SKIP] 无关键词
+  [20] https://blog.google/products-and-platforms/products/education/helping-students-a
+    [SKIP] 无关键词
+  [21] https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-l
+    [SKIP] 无关键词
+  [22] https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4-builde
+    [SKIP] 无关键词
+  [23] https://blog.google/innovation-and-ai/technology/developers-tools/bringing-gemin
+    [SKIP] 无关键词
+  [24] https://blog.google/innovation-and-ai/technology/research/co-scientist-research-
+    [SKIP] 无关键词
+  [25] https://blog.google/company-news/outreach-and-initiatives/sustainability/america
+    [SKIP] 缺少 article 或 h1 标签
+  [26] https://blog.google/products-and-platforms/platforms/android/paris-hilton/
+    [SKIP] 无关键词
+  [27] https://blog.google/products-and-platforms/products/search/soccer-tournament-goo
+    [SKIP] 无关键词
+  [28] https://blog.google/products-and-platforms/products/google-fi-wireless/internati
+    [SKIP] 无关键词
+  [29] https://blog.google/products-and-platforms/products/education/future-learning-ai
+    [SKIP] 无关键词
+  [30] https://blog.google/innovation-and-ai/products/notebooklm/better-research-notebo
+    [SKIP] 无关键词
+
+  Done. found=1 new=1 updated=0
+
