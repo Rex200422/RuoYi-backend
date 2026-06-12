@@ -1,12 +1,12 @@
 === U.S. Treasury Spider v3 ===
 
 Page 1: https://home.treasury.gov/news/press-releases
-  [ERR] Page 1 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)')))
+  [ERR] Page 1 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 503 Service Unavailable')))
 
 Page 2: https://home.treasury.gov/news/press-releases?page=2
-  [ERR] Page 2 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases?page=2 (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)')))
+  [ERR] Page 2 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases?page=2 (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 503 Service Unavailable')))
 
 Page 3: https://home.treasury.gov/news/press-releases?page=3
-  [ERR] Page 3 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases?page=3 (Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)')))
+  [ERR] Page 3 failed: HTTPSConnectionPool(host='home.treasury.gov', port=443): Max retries exceeded with url: /news/press-releases?page=3 (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 503 Service Unavailable')))
 
 === Done. Total saved: 0 articles ===

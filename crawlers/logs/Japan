@@ -1,22 +1,22 @@
 
 访问月度索引：https://www.mofa.go.jp/whats/2026_index06.html
-  ⚠️ 访问月度索引: .go.jp/whats/2026_index06.html 失败(第1次): Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index
-     4.2秒后重试...
-  ⚠️ 访问月度索引: .go.jp/whats/2026_index06.html 失败(第2次): Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index
-     2.8秒后重试...
+  ⚠️ 访问月度索引: .go.jp/whats/2026_index06.html 失败(第1次): Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.mofa.go.jp/whats/202
+     4.5秒后重试...
+  ⚠️ 访问月度索引: .go.jp/whats/2026_index06.html 失败(第2次): Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.mofa.go.jp/whats/202
+     4.0秒后重试...
   ❌ 访问月度索引: .go.jp/whats/2026_index06.html 重试3次均失败
-列表页失败：Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index06.html
+列表页失败：Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.mofa.go.jp/whats/2026_index06.html
 Call log:
   - navigating to "https://www.mofa.go.jp/whats/2026_index06.html", waiting until "networkidle"
 
 
 访问月度索引：https://www.mofa.go.jp/whats/2026_index05.html
   ⚠️ 访问月度索引: .go.jp/whats/2026_index05.html 失败(第1次): Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index
-     3.3秒后重试...
-  ⚠️ 访问月度索引: .go.jp/whats/2026_index05.html 失败(第2次): Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index
+     3.8秒后重试...
+  ⚠️ 访问月度索引: .go.jp/whats/2026_index05.html 失败(第2次): Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.mofa.go.jp/whats/202
      2.3秒后重试...
   ❌ 访问月度索引: .go.jp/whats/2026_index05.html 重试3次均失败
-列表页失败：Page.goto: net::ERR_CONNECTION_CLOSED at https://www.mofa.go.jp/whats/2026_index05.html
+列表页失败：Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.mofa.go.jp/whats/2026_index05.html
 Call log:
   - navigating to "https://www.mofa.go.jp/whats/2026_index05.html", waiting until "networkidle"
 

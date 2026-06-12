@@ -308,7 +308,7 @@ def main():
       6. 失败时记录错误信息
     """
     args = parse_args()  # 解析命令行参数
-    keywords = [args.keyword] if args.keyword else ALL_KEYWORDS  # 确定关键词列表
+    keywords = [k.strip() for k in args.keyword.split(',') if k.strip()] if args.keyword else ALL_KEYWORDS  # 确定关键词列表
     max_per_kw = args.max or MAX_PER_KEYWORD  # 每个关键词最多爬取数
 
     update_crawl_log_start(args.log_id)  # 记录开始时间

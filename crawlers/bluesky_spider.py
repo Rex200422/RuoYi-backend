@@ -423,7 +423,7 @@ def main():
 
     # 确定关键词列表
     if args.keyword:
-        keywords = [args.keyword]
+        keywords = [k.strip() for k in args.keyword.split(',') if k.strip()]
     else:
         keywords = ALL_KEYWORDS
 
