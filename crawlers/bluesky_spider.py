@@ -33,6 +33,7 @@ os.environ["HTTP_PROXY"] = PROXIES["http"]
 os.environ["HTTPS_PROXY"] = PROXIES["https"]
 
 from atproto import Client
+from atproto_client.exceptions import ModelError
 import time
 import requests
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
@@ -329,7 +330,11 @@ def crawl(keywords, max_per_kw):
             display_kw = KEYWORD_DISPLAY.get(kw, kw)
             print(f"\n--- 搜索: {kw} ---")
             # 调用 Bluesky API 搜索帖子
-            result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": min(max_per_kw * 3, 100), "sort": "latest"}), description=f"搜索帖子{kw}")
+            try:
+                result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": min(max_per_kw * 3, 100), "sort": "latest"}), description=f"搜索帖子{kw}")
+            except ModelError as e:
+                print(f"  [WARN] 搜索结果包含不支持的embed类型，跳过此关键词: {e}")
+                continue
 
             # 按媒体类型排序：有图片的帖子优先（embed.images > embed.external.thumb > 无图）
             def has_media(post):
