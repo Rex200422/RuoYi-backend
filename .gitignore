@@ -51,3 +51,5 @@ __pycache__/
 
 # 爬虫下载的图片文件
 crawlers/_images/
+crawlers/_chrome_profile_*/
+crawlers/logs/

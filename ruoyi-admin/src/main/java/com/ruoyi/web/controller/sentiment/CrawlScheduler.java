@@ -189,6 +189,8 @@ public class CrawlScheduler {
         switch (siteName.toLowerCase().trim()) {
             case "bluesky": return "bluesky_spider.py";
             case "cnn": return "cnn_spider.py";
+            case "tumblr": return "tumblr_spider.py";
+            case "reddit": return "reddit_spider.py";
             case "u.s. treasury":
             case "us treasury":
             case "treasury": return "treasury_spider.py";
