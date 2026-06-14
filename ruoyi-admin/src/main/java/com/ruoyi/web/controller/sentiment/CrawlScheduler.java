@@ -97,6 +97,12 @@ public class CrawlScheduler {
         log.info("Starting crawl for config id={}, site={}, keyword={}",
                  config.getId(), config.getSiteName(), config.getKeyword());
 
+        // Update last_crawl_time FIRST to prevent re-trigger by next scheduler tick
+        CrawlConfig updateConfig = new CrawlConfig();
+        updateConfig.setId(config.getId());
+        updateConfig.setLastCrawlTime(new Date());
+        crawlConfigService.update(updateConfig);
+
         // Insert crawl_log entry with status=running
         CrawlLog crawlLog = new CrawlLog();
         crawlLog.setSiteName(config.getSiteName());
@@ -105,12 +111,6 @@ public class CrawlScheduler {
         crawlLog.setStartTime(new Date());
         crawlLog.setConfigId(config.getId());
         crawlLogService.insert(crawlLog);
-
-        // Update last_crawl_time IMMEDIATELY to prevent re-trigger by next scheduler tick
-        CrawlConfig updateConfig = new CrawlConfig();
-        updateConfig.setId(config.getId());
-        updateConfig.setLastCrawlTime(new Date());
-        crawlConfigService.update(updateConfig);
 
         String scriptFile = getSiteScript(config.getSiteName());
         if (scriptFile == null) {
@@ -134,25 +134,37 @@ public class CrawlScheduler {
         String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
 
         String command = String.format(
-            "stdbuf -oL python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1 | tee %s",
-            scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId(), logFilePath
+            "python3 -u %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1",
+            scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId()
         );
 
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             Process process = pb.start();
             
-            // Capture stdout+stderr for error reporting
+            // 实时逐行捕获输出并写入日志文件
             StringBuilder output = new StringBuilder();
-            try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(process.getInputStream()))) {
+            java.io.FileWriter logWriter = null;
+            try {
+                logWriter = new java.io.FileWriter(logFilePath);
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(process.getInputStream()));
                 String line;
                 while ((line = reader.readLine()) != null) {
                     output.append(line).append("\n");
+                    logWriter.write(line);
+                    logWriter.write("\n");
+                    logWriter.flush();
                 }
+                reader.close();
+            } catch (Exception logEx) {
+                log.error("Failed to write crawl log to {}: {}", logFilePath, logEx.getMessage(), logEx);
+            } finally {
+                if (logWriter != null) try { logWriter.close(); } catch (Exception ignored) {}
             }
             
             int exitCode = process.waitFor();
+            log.info("Crawl log written to {} ({} bytes)", logFilePath, new java.io.File(logFilePath).length());
 
             if (exitCode == 0) {
                 log.info("Crawl completed successfully for config id={}", config.getId());
@@ -190,6 +202,7 @@ public class CrawlScheduler {
             case "cnn": return "cnn_spider.py";
             case "tumblr": return "tumblr_spider.py";
             case "reddit": return "reddit_spider.py";
+            case "youtube": return "youtube_spider.py";
             case "u.s. treasury":
             case "us treasury":
             case "treasury": return "treasury_spider.py";
