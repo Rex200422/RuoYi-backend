@@ -1,23 +1,16 @@
-"""
-YouTube 爬虫（优化版）
-只抓取视频元数据，不抓取评论（通过 skip_download=True + 不启动Playwright实现）
-
-性能对比：
-- 之前：每个视频约1-2分钟（Playwright加载+滚动+抓评论）
-- 现在：每个视频约1-2秒（只调用yt-dlp API）
-- 速度提升：60-120倍
-"""
 import os, sys, re, time, random, argparse, hashlib, uuid
 import requests
 import yt_dlp
+from playwright.sync_api import sync_playwright
 
 # ============================================================
 # 导入统一配置和工具模块
 # ============================================================
 from crawler_config import (
     DB, IMAGE_DIR, MAX_PER_KEYWORD, REQUEST_DELAY, 
-    USER_AGENT, ALL_KEYWORDS, PROXIES
+    USER_AGENT, PLAYWRIGHT_PROXY
 )
+from proxy_config import PROXIES
 from common_db import (
     get_db, save_social_post, save_social_comment, save_social_post_image,
     update_crawl_log, update_crawl_log_error,
@@ -25,8 +18,12 @@ from common_db import (
 )
 
 
-# ===== 站点配置 =====
-SITE_NAME = "YouTube"
+# ===== 配置区：需要根据目标站点修改 =====
+# ============================================================
+# 站点配置 — 创建新爬虫时只需修改这里
+# ============================================================
+SITE_NAME = "YouTube"                       # 站点名
+from crawler_config import ALL_KEYWORDS as ALL_KEYWORDS
 
 
 # ============================================================
@@ -34,12 +31,16 @@ SITE_NAME = "YouTube"
 # ============================================================
 
 def clean(text):
-    """清理文本中的多余空白字符。"""
+    """
+    清理文本中的多余空白字符。
+    """
     return re.sub(r"\s+", " ", text).strip() if text else ""
 
 
 def extract_keywords(text):
-    """从文本中提取匹配的关键词。"""
+    """
+    从文本中提取匹配的关键词。
+    """
     t = text.lower()
     return ",".join(sorted(set(
         k for k in ALL_KEYWORDS
@@ -52,7 +53,9 @@ def extract_keywords(text):
 # ============================================================
 
 def download_image(url, post_id, idx=0):
-    """下载图片到本地目录。"""
+    """
+    下载图片到本地目录。
+    """
     if not url:
         return ""
     post_hash = hashlib.md5(post_id.encode()).hexdigest()[:16]
@@ -78,12 +81,10 @@ def download_image(url, post_id, idx=0):
 
 def search_posts(keyword, max_count):
     """
-    根据关键词搜索 YouTube 视频并返回结果（只抓取元数据，不抓评论）。
+    根据关键词搜索 YouTube 视频并返回结果。
     
-    性能对比：
-    - 之前：每个视频约1-2分钟（Playwright加载+滚动+抓评论）
-    - 现在：每个视频约1-2秒（只调用yt-dlp API）
-    - 速度提升：60-120倍
+    1. 通过 yt-dlp 的 ytsearch 协议高速获取视频元数据
+    2. 通过 Playwright 模拟用户滚动行为抓取懒加载评论
     """
     posts = []
     
@@ -112,37 +113,101 @@ def search_posts(keyword, max_count):
         print("  [yt-dlp] 未检索到相关视频信息")
         return posts
 
-    # 2. 【优化】不再启动 Playwright，只处理元数据
-    print("  [优化] 跳过Playwright，只抓取元数据（速度提升60-120倍）...")
-    
-    for entry in video_entries:
-        if not entry:
-            continue
+    # 2. 启动 Playwright 集中处理获取到视频的动态评论
+    with sync_playwright() as p:
+        print("  [Playwright] 启动自动化浏览器实例...")
+        browser = p.chromium.launch(headless=True, proxy=PLAYWRIGHT_PROXY)
         
-        video_id = entry.get("id")
-        video_url = entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
-        print(f"    -> 正在解析视频页: {entry.get('title')[:30]}... ({video_url})")
-        
-        # 转换发布时间 YYYYMMDD -> YYYY-MM-DD 00:00:00
-        raw_date = entry.get("upload_date")
-        publish_time = ""
-        if raw_date and len(raw_date) == 8:
-            publish_time = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]} 00:00:00"
-        
-        # 组装主帖子/视频数据结构（无评论）
-        post_item = {
-            "post_id": video_id,
-            "title": entry.get("title", ""),
-            "author": entry.get("uploader", ""),
-            "content": entry.get("description", ""),
-            "publish_time": publish_time,
-            "like_count": entry.get("like_count", 0) or 0,
-            "comment_count": entry.get("comment_count", 0) or 0,
-            "original_url": video_url,
-            "image_urls": [entry.get("thumbnail")] if entry.get("thumbnail") else [],
-            "comments": []  # 【优化】不再抓取评论，速度提升60-120倍
-        }
-        posts.append(post_item)
+        for entry in video_entries:
+            if not entry:
+                continue
+            
+            video_id = entry.get("id")
+            video_url = entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
+            print(f"    -> 正在解析视频页: {entry.get('title')[:30]}... ({video_url})")
+            
+            # 转换发布时间 YYYYMMDD -> YYYY-MM-DD 00:00:00
+            raw_date = entry.get("upload_date")
+            publish_time = ""
+            if raw_date and len(raw_date) == 8:
+                publish_time = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]} 00:00:00"
+            
+            comments = []
+            try:
+                page = browser.new_page(user_agent=USER_AGENT)
+                page.goto(video_url, timeout=45000)
+                
+                # 触发 YouTube 评论区初始化的关键步骤：先向下方滚动一段距离
+                page.evaluate("window.scrollTo(0, 500);")
+                time.sleep(2)
+                
+                try:
+                    # 确保评论区根节点被渲染出来
+                    page.wait_for_selector("#comments", timeout=10000)
+                except Exception:
+                    print("      [提示] 评论区未能快速加载，尝试追加深层滚动...")
+                
+                # 循环向下滚动若干次，让懒加载的动态评论流式加载出来
+                for _ in range(3):
+                    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight);")
+                    time.sleep(2)
+                
+                # YouTube 评论线程标准选择器：ytd-comment-thread-renderer
+                comment_threads = page.query_selector_all("ytd-comment-thread-renderer")
+                
+                for idx, thread in enumerate(comment_threads):
+                    try:
+                        comment_id_el = thread.query_selector("#comment")
+                        c_id = comment_id_el.get_attribute("data-id") if comment_id_el else f"{video_id}_c_{idx}"
+                        if not c_id:
+                            c_id = str(uuid.uuid4())[:16]
+                            
+                        author_el = thread.query_selector("#author-text")
+                        author = clean(author_el.inner_text()) if author_el else "Unknown"
+                        
+                        content_el = thread.query_selector("#content-text")
+                        content = clean(content_el.inner_text()) if content_el else ""
+                        if not content:
+                            continue  # 无内容评论不作保留
+                            
+                        like_el = thread.query_selector("#vote-count-middle")
+                        like_str = clean(like_el.inner_text()) if like_el else "0"
+                        like_count = int(like_str) if like_str.isdigit() else 0
+                        
+                        time_el = thread.query_selector("yt-formatted-string.published-time-text a")
+                        comment_time = clean(time_el.inner_text()) if time_el else ""
+                        
+                        # 组装评论数据结构
+                        comments.append({
+                            "comment_id": c_id,
+                            "commenter": author,
+                            "comment_content": content,
+                            "like_count": like_count,
+                            "comment_time": comment_time
+                        })
+                    except Exception:
+                        continue
+                        
+                page.close()
+            except Exception as pe:
+                print(f"      [Playwright] 评论流捕获异常: {pe}")
+            
+            # 组装主帖子/视频数据结构
+            post_item = {
+                "post_id": video_id,
+                "title": entry.get("title", ""),
+                "author": entry.get("uploader", ""),
+                "content": entry.get("description", ""),
+                "publish_time": publish_time,
+                "like_count": entry.get("like_count", 0) or 0,
+                "comment_count": entry.get("comment_count", 0) or 0,
+                "original_url": video_url,
+                "image_urls": [entry.get("thumbnail")] if entry.get("thumbnail") else [],
+                "comments": comments
+            }
+            posts.append(post_item)
+            
+        browser.close()
         
     return posts
 
@@ -152,7 +217,9 @@ def search_posts(keyword, max_count):
 # ============================================================
 
 def save_posts(posts, keyword):
-    """将搜索到的帖子保存到数据库。"""
+    """
+    将搜索到的帖子保存到数据库。
+    """
     items_found = items_new = items_updated = 0
 
     for post in posts:
@@ -194,9 +261,17 @@ def save_posts(posts, keyword):
                 items_updated += 1
                 print(f"    [UPDATE] {post_id[:30]}")
 
-            # 【优化】不再保存评论（跳过此步骤，速度提升60-120倍）
-            # for c in post.get("comments", []):
-            #     save_social_comment(cur, {...})
+            # 保存评论
+            for c in post.get("comments", []):
+                save_social_comment(cur, {
+                    "post_id": post_id,
+                    "title": post.get("title", ""),
+                    "comment_id": c["comment_id"],
+                    "commenter": c.get("commenter", ""),
+                    "comment_content": c.get("comment_content", ""),
+                    "like_count": c.get("like_count", 0),
+                    "comment_time": c.get("comment_time", ""),
+                })
 
             conn.commit()
         finally:
@@ -213,12 +288,10 @@ def save_posts(posts, keyword):
 
 def crawl(keywords, max_per_kw):
     """
-    爬虫主流程：按关键词搜索 → 保存帖子（只抓元数据，不抓评论）。
-    性能提升：60-120倍（每个视频从1-2分钟降到1-2秒）
+    爬虫主流程：按关键词搜索 → 保存帖子。
     """
     print(f"\n{'='*50}")
-    print(f"  {SITE_NAME} Spider (优化版)  keywords={keywords}  max={max_per_kw}")
-    print(f"  只抓取视频元数据，不抓评论（性能提升60-120倍）")
+    print(f"  {SITE_NAME} Spider  keywords={keywords}  max={max_per_kw}")
     print(f"{'='*50}")
 
     total_found = total_new = total_updated = 0
@@ -241,7 +314,9 @@ def crawl(keywords, max_per_kw):
 # ============================================================
 
 def parse_args():
-    """解析命令行参数。"""
+    """
+    解析命令行参数。
+    """
     arg_parser = argparse.ArgumentParser(description=f"{SITE_NAME} Spider")
     arg_parser.add_argument("--config-id", type=int, default=None)
     arg_parser.add_argument("--keyword", type=str, default=None)
@@ -253,10 +328,8 @@ def parse_args():
 def main():
     """
     主函数：解析参数 → 执行爬虫 → 更新日志。
-    性能提升：60-120倍（每个视频从1-2分钟降到1-2秒）
     """
     args = parse_args()
-    # 关键词逗号分割
     keywords = [k.strip() for k in args.keyword.split(",") if k.strip()] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max or MAX_PER_KEYWORD
 
