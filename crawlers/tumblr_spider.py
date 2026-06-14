@@ -33,11 +33,8 @@ import datetime
 # 代理配置初始化（必须在引入 uc 和 requests 之前设置环境变量）
 # ============================================================
 from proxy_config import PROXIES
-os.environ["HTTP_PROXY"] = PROXIES["http"]
-os.environ["HTTPS_PROXY"] = PROXIES["https"]
-# 应对驱动下载的 SSL 问题
-os.environ["http_proxy"] = PROXIES["http"]
-os.environ["https_proxy"] = PROXIES["https"]
+# 注意：不设置系统代理环境变量，通过 Chrome --proxy-server 设置
+# 避免 Selenium 驱动内部通信走代理导致死锁
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options

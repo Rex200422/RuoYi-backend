@@ -140,7 +140,6 @@ public class CrawlScheduler {
 
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
-            pb.redirectErrorStream(true);
             Process process = pb.start();
             
             // Capture stdout+stderr for error reporting
