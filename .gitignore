@@ -53,3 +53,5 @@ __pycache__/
 crawlers/_images/
 crawlers/_chrome_profile_*/
 crawlers/logs/
+crawlers/_edge_profile_x/
+crawlers/x_cookies.json

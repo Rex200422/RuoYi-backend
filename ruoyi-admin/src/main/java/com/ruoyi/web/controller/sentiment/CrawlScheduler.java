@@ -203,6 +203,7 @@ public class CrawlScheduler {
             case "tumblr": return "tumblr_spider.py";
             case "reddit": return "reddit_spider.py";
             case "threads": return "threads_spider.py";
+            case "x": return "x_spider.py";
             case "youtube": return "youtube_spider.py";
             case "u.s. treasury":
             case "us treasury":
