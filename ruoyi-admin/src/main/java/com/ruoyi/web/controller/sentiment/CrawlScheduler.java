@@ -134,7 +134,7 @@ public class CrawlScheduler {
         String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
 
         String command = String.format(
-            "python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1 | tee %s",
+            "stdbuf -oL python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1 | tee %s",
             scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId(), logFilePath
         );
 
