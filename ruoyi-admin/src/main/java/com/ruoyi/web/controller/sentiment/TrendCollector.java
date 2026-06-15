@@ -51,11 +51,11 @@ public class TrendCollector {
     private void collectCategoryTrends(LocalDateTime now) {
         // 统计social_post的分类分布
         List<Map<String, Object>> postCounts = jdbc.queryForList(
-            "SELECT COALESCE(category, '其他') AS cat, COUNT(*) AS cnt FROM social_post GROUP BY cat"
+            "SELECT CASE WHEN category IS NULL OR category = '' THEN '其他' ELSE category END AS cat, COUNT(*) AS cnt FROM social_post GROUP BY cat"
         );
         // 统计news_article的分类分布
         List<Map<String, Object>> newsCounts = jdbc.queryForList(
-            "SELECT COALESCE(category, '其他') AS cat, COUNT(*) AS cnt FROM news_article GROUP BY cat"
+            "SELECT CASE WHEN category IS NULL OR category = '' THEN '其他' ELSE category END AS cat, COUNT(*) AS cnt FROM news_article GROUP BY cat"
         );
         
         Map<String, Integer> totalCounts = new LinkedHashMap<>();
