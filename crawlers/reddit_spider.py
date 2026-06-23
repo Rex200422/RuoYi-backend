@@ -295,7 +295,6 @@ def crawl(keywords, max_per_kw):
                 count += 1
 
     finally:
-        cleanup_child_processes()
         cur.close()
         conn.close()
         driver.quit()
@@ -315,6 +314,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # 启动前清理残留进程
+    kill_orphaned_processes()
 
     keywords = [k.strip() for k in args.keyword.split(",") if k.strip()] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max or DEFAULT_MAX_PER_KW

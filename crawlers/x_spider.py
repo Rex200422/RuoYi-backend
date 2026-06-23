@@ -332,7 +332,6 @@ def crawl(keywords, max_per_kw):
                 print(f"  {kw}: {cnt}条")
 
         finally:
-            cleanup_child_processes()
             context.close()
             cur.close()
             conn.close()
@@ -408,6 +407,8 @@ def main():
     except Exception as e:
         update_crawl_log_error(args.log_id, str(e))
         raise
+    finally:
+        cleanup_child_processes()
 
 
 if __name__ == "__main__":

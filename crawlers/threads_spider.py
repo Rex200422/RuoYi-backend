@@ -217,7 +217,6 @@ def crawl(keywords, max_per_kw):
             print(f"  {kw}: {cnt}条")
             
     finally: 
-        cleanup_child_processes()
         if driver:
             try: driver.quit()
             except Exception: pass
@@ -248,6 +247,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # 启动前清理残留进程
+    kill_orphaned_processes()
 
     if args.keyword:
         keywords = [k.strip() for k in args.keyword.split(",") if k.strip()]
