@@ -4,6 +4,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 
@@ -80,6 +81,30 @@ public class CrawlScheduler {
      * Trigger a crawl for the given config.
      * Acquires a semaphore permit before running, releases on completion.
      */
+
+    /**
+     * Trigger all enabled crawl configs. Uses the bounded thread pool,
+     * so concurrency is naturally limited by MAX_CONCURRENT.
+     */
+    public int triggerAllEnabled() {
+        List<CrawlConfig> configs = crawlConfigService.selectDueConfigs();
+        if (configs == null) return 0;
+        int triggered = 0;
+        for (CrawlConfig config : configs) {
+            int running = crawlLogService.selectRunningCountByConfigId(config.getId());
+            if (running > 0) {
+                log.info("Skipping config id={} — already running", config.getId());
+                continue;
+            }
+            triggerCrawl(config);
+            triggered++;
+        }
+        return triggered;
+    }
+
+    public int getMaxConcurrent() {
+        return MAX_CONCURRENT;
+    }
     public void triggerCrawl(CrawlConfig config) {
         // Acquire semaphore permit (blocks if all permits taken)
         if (!crawlSemaphore.tryAcquire()) {
@@ -163,7 +188,15 @@ public class CrawlScheduler {
                 if (logWriter != null) try { logWriter.close(); } catch (Exception ignored) {}
             }
             
-            int exitCode = process.waitFor();
+            int exitCode;
+            boolean finished = process.waitFor(1, TimeUnit.HOURS);
+            if (!finished) {
+                log.warn("Crawl for config id={} exceeded 1h timeout, force killing", config.getId());
+                process.destroyForcibly();
+                exitCode = -1;
+            } else {
+                exitCode = process.exitValue();
+            }
             log.info("Crawl log written to {} ({} bytes)", logFilePath, new java.io.File(logFilePath).length());
 
             if (exitCode == 0) {

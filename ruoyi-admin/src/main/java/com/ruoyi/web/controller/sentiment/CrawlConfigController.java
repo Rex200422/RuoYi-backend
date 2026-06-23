@@ -24,6 +24,7 @@ public class CrawlConfigController extends BaseController {
     private static final Logger log = LoggerFactory.getLogger(CrawlConfigController.class);
 
     @Autowired private ICrawlConfigService crawlConfigService;
+    @Autowired private CrawlScheduler crawlScheduler;
     @Autowired private ICrawlLogService crawlLogService;
 
     @PreAuthorize("@ss.hasPermi('system:sentiment:list')")
@@ -96,29 +97,9 @@ public class CrawlConfigController extends BaseController {
     @PreAuthorize("@ss.hasPermi('system:sentiment:edit')")
     @PostMapping("/triggerAll")
     public AjaxResult triggerAll() {
-        CrawlConfig query = new CrawlConfig();
-        query.setEnabled(1);
-        List<CrawlConfig> enabledConfigs = crawlConfigService.selectList(query);
-
-        if (enabledConfigs == null || enabledConfigs.isEmpty()) {
-            return AjaxResult.error("No enabled crawl configs found");
-        }
-
-        int triggered = 0;
-        for (CrawlConfig config : enabledConfigs) {
-            CrawlLog crawlLog = new CrawlLog();
-            crawlLog.setSiteName(config.getSiteName());
-            crawlLog.setKeyword(config.getKeyword());
-            crawlLog.setStatus("running");
-            crawlLog.setStartTime(new Date());
-            crawlLog.setConfigId(config.getId());
-            crawlLogService.insert(crawlLog);
-
-            runCrawlScript(config, crawlLog.getId());
-            triggered++;
-        }
-
-        return AjaxResult.success("Triggered " + triggered + " crawls");
+        // 通过 CrawlScheduler 统一调度，受 semaphore 限制（MAX_CONCURRENT=2）
+        int triggered = crawlScheduler.triggerAllEnabled();
+        return AjaxResult.success("已触发 " + triggered + " 个爬取任务（并发受" + crawlScheduler.getMaxConcurrent() + "个限制）");
     }
 
     /**

@@ -11,6 +11,7 @@ from crawler_config import (
     USER_AGENT, PLAYWRIGHT_PROXY
 )
 from proxy_config import PROXIES
+from process_cleanup import cleanup_child_processes, kill_orphaned_processes
 from common_db import (
     get_db, save_social_post, save_social_comment, save_social_post_image,
     update_crawl_log, update_crawl_log_error,
@@ -333,6 +334,8 @@ def main():
     keywords = [k.strip() for k in args.keyword.split(",") if k.strip()] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max or MAX_PER_KEYWORD
 
+    # 启动前清理残留进程
+    kill_orphaned_processes()
     update_crawl_log_start(args.log_id)
     try:
         found, new, updated = crawl(keywords, max_per_kw)

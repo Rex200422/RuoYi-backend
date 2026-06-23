@@ -47,6 +47,7 @@ from proxy_config import PROXIES
 
 from playwright.sync_api import sync_playwright
 
+from process_cleanup import cleanup_child_processes, kill_orphaned_processes
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import ALL_KEYWORDS
 
@@ -331,6 +332,7 @@ def crawl(keywords, max_per_kw):
                 print(f"  {kw}: {cnt}条")
 
         finally:
+            cleanup_child_processes()
             context.close()
             cur.close()
             conn.close()
@@ -395,6 +397,8 @@ def main():
     keywords = [k.strip() for k in args.keyword.split(",") if k.strip()] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max if args.max is not None else DEFAULT_MAX_PER_KW
 
+    # 启动前清理残留进程
+    kill_orphaned_processes()
     update_crawl_log_start(args.log_id)
 
     try:

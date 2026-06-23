@@ -37,6 +37,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from process_cleanup import cleanup_child_processes, kill_orphaned_processes
 from common_db import get_db, save_social_post, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB
 
@@ -216,6 +217,7 @@ def crawl(keywords, max_per_kw):
             print(f"  {kw}: {cnt}条")
             
     finally: 
+        cleanup_child_processes()
         if driver:
             try: driver.quit()
             except Exception: pass
