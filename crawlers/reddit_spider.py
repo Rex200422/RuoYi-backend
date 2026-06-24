@@ -21,7 +21,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 
 from proxy_config import PROXIES
-from process_cleanup import cleanup_child_processes, kill_orphaned_processes
+from process_cleanup import kill_child_group, kill_orphaned_processes, start_xvfb
 from common_db import (
     get_db,
     save_social_post,
@@ -37,8 +37,8 @@ from crawler_config import IMAGE_DIR
 def create_driver():
     """启动 Chrome（通过 Xvfb 虚拟显示运行，避免 Reddit 反爬检测）"""
     import subprocess
-    xvfb_proc = subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"])
-    os.environ["DISPLAY"] = ":99"
+    xvfb_proc, display = start_xvfb()
+    os.environ["DISPLAY"] = f":{display}"
     time.sleep(0.5)
     for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
         os.environ.pop(k, None)
@@ -297,8 +297,9 @@ def crawl(keywords, max_per_kw):
     finally:
         cur.close()
         conn.close()
-        driver.quit()
-    if xvfb_proc: xvfb_proc.terminate()
+        try: driver.quit()
+        except: pass
+        kill_child_group(xvfb_proc)
 
     return items_found, items_new, items_updated
 
@@ -315,14 +316,10 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # 启动前清理残留进程
-    kill_orphaned_processes()
 
     keywords = [k.strip() for k in args.keyword.split(",") if k.strip()] if args.keyword else ALL_KEYWORDS
     max_per_kw = args.max or DEFAULT_MAX_PER_KW
 
-    # 启动前清理残留进程
-    kill_orphaned_processes()
     update_crawl_log_start(args.log_id)
 
     try:

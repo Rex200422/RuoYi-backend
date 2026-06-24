@@ -69,4 +69,7 @@
     <select id="selectTotalRunningCount" resultType="int">
         select count(*) from crawl_log where status='running'
     </select>
+    <select id="selectPendingOrRunningCountByConfigId" resultType="int">
+        select count(*) from crawl_log where config_id=#{configId} and status in ('pending', 'running')
+    </select>
 </mapper>

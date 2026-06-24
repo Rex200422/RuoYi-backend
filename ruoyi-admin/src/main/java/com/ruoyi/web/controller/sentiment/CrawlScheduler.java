@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import jakarta.annotation.PostConstruct;
 import com.ruoyi.system.domain.sentiment.CrawlConfig;
 import com.ruoyi.system.domain.sentiment.CrawlLog;
 import com.ruoyi.system.service.sentiment.ICrawlConfigService;
@@ -23,14 +24,34 @@ import com.ruoyi.system.service.sentiment.ICrawlLogService;
  * Runs every 60s. Key safety rules:
  *   1. Skip if this config already has a running crawl (prevents duplicate triggers)
  *   2. Max 3 concurrent crawls globally (Playwright is very heavy on CPU/memory)
- *   3. last_crawl_time updated on START (not just on success) to prevent re-trigger
+ *   3. last_crawl_time updated on completion (in finally block) to prevent re-trigger
  */
 @Component
 public class CrawlScheduler {
+    @PostConstruct
+    public void init() {
+        // 服务启动时将所有 running 状态的任务标记为 failed
+        CrawlLog query = new CrawlLog();
+        query.setStatus("running");
+        List<CrawlLog> runningLogs = crawlLogService.selectList(query);
+        if (runningLogs != null && !runningLogs.isEmpty()) {
+            for (CrawlLog logEntry : runningLogs) {
+                CrawlLog update = new CrawlLog();
+                update.setId(logEntry.getId());
+                update.setStatus("failed");
+                update.setErrorMsg("服务重启，任务被中断");
+                update.setEndTime(new Date());
+                crawlLogService.update(update);
+                log.warn("标记 crawl_log id={} ({}) 为 failed — 服务重启", logEntry.getId(), logEntry.getSiteName());
+            }
+            log.info("启动时清理了 {} 条 running 状态的爬取任务", runningLogs.size());
+        }
+    }
+
     private static final Logger log = LoggerFactory.getLogger(CrawlScheduler.class);
 
     /** Max concurrent crawls — 2-core HDD machine: 2 crawlers max (each Playwright spawns 10+ processes) */
-    private static final int MAX_CONCURRENT = 2;
+    private static final int MAX_CONCURRENT = 1;
 
     @Autowired private ICrawlConfigService crawlConfigService;
     @Autowired private ICrawlLogService crawlLogService;
@@ -39,7 +60,7 @@ public class CrawlScheduler {
     private final Semaphore crawlSemaphore = new Semaphore(MAX_CONCURRENT, true);
 
     /** Fixed thread pool — bounded to MAX_CONCURRENT threads */
-    private final ExecutorService crawlExecutor = Executors.newFixedThreadPool(MAX_CONCURRENT);
+    private final ExecutorService crawlExecutor = Executors.newFixedThreadPool(MAX_CONCURRENT + 4);
 
     /**
      * Check every minute for due crawl configs and trigger them.
@@ -57,11 +78,11 @@ public class CrawlScheduler {
         log.info("Found {} due crawl config(s) to run.", dueConfigs.size());
 
         for (CrawlConfig config : dueConfigs) {
-            // Safety check 1: skip if this config already has a running crawl
-            int runningForConfig = crawlLogService.selectRunningCountByConfigId(config.getId());
-            if (runningForConfig > 0) {
-                log.info("Skipping config id={} ({}) — already {} running crawl(s)",
-                         config.getId(), config.getSiteName(), runningForConfig);
+            // Safety check 1: skip if this config already has a running or pending crawl
+            int pendingOrRunning = crawlLogService.selectPendingOrRunningCountByConfigId(config.getId());
+            if (pendingOrRunning > 0) {
+                log.info("Skipping config id={} ({}) — already {} pending/running crawl(s)",
+                         config.getId(), config.getSiteName(), pendingOrRunning);
                 continue;
             }
 
@@ -73,7 +94,7 @@ public class CrawlScheduler {
             }
 
             // Trigger crawl asynchronously on bounded thread pool
-            CompletableFuture.runAsync(() -> triggerCrawl(config), crawlExecutor);
+            CompletableFuture.runAsync(() -> triggerCrawl(config, null), crawlExecutor);
         }
     }
 
@@ -87,16 +108,31 @@ public class CrawlScheduler {
      * so concurrency is naturally limited by MAX_CONCURRENT.
      */
     public int triggerAllEnabled() {
-        List<CrawlConfig> configs = crawlConfigService.selectDueConfigs();
-        if (configs == null) return 0;
+        // 查询所有启用的配置，而非只查"到期"的（手动触发应强制执行）
+        CrawlConfig query = new CrawlConfig();
+        query.setEnabled(1);
+        List<CrawlConfig> configs = crawlConfigService.selectList(query);
+        if (configs == null || configs.isEmpty()) return 0;
         int triggered = 0;
         for (CrawlConfig config : configs) {
-            int running = crawlLogService.selectRunningCountByConfigId(config.getId());
-            if (running > 0) {
-                log.info("Skipping config id={} — already running", config.getId());
+            // 跳过已经有 pending 或 running 任务的配置
+            int pendingOrRunning = crawlLogService.selectPendingOrRunningCountByConfigId(config.getId());
+            if (pendingOrRunning > 0) {
+                log.info("Skipping config id={} — already {} pending/running task(s)", config.getId(), pendingOrRunning);
                 continue;
             }
-            triggerCrawl(config);
+            // 插入 pending 状态的 crawl_log 记录（立即可见）
+            CrawlLog pendingLog = new CrawlLog();
+            pendingLog.setSiteName(config.getSiteName());
+            pendingLog.setKeyword(config.getKeyword());
+            pendingLog.setStatus("pending");
+            pendingLog.setConfigId(config.getId());
+            pendingLog.setStartTime(new Date());
+            crawlLogService.insert(pendingLog);
+
+            // 异步提交到线程池，由信号量控制并发排队
+            final Long pendingLogId = pendingLog.getId();
+            CompletableFuture.runAsync(() -> triggerCrawl(config, pendingLogId), crawlExecutor);
             triggered++;
         }
         return triggered;
@@ -105,65 +141,77 @@ public class CrawlScheduler {
     public int getMaxConcurrent() {
         return MAX_CONCURRENT;
     }
-    public void triggerCrawl(CrawlConfig config) {
-        // Acquire semaphore permit (blocks if all permits taken)
-        if (!crawlSemaphore.tryAcquire()) {
-            log.warn("Semaphore full, skipping config id={}", config.getId());
-            return;
-        }
+    public void triggerCrawl(CrawlConfig config, Long pendingLogId) {
+        // Acquire semaphore permit — blocks until a slot is available (no timeout for pending tasks)
         try {
-            doCrawl(config);
+            crawlSemaphore.acquire();
+            doCrawl(config, pendingLogId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted waiting for semaphore, config id={}", config.getId());
         } finally {
             crawlSemaphore.release();
         }
     }
 
-    private void doCrawl(CrawlConfig config) {
+    private void doCrawl(CrawlConfig config, Long pendingLogId) {
         log.info("Starting crawl for config id={}, site={}, keyword={}",
                  config.getId(), config.getSiteName(), config.getKeyword());
 
-        // Update last_crawl_time FIRST to prevent re-trigger by next scheduler tick
-        CrawlConfig updateConfig = new CrawlConfig();
-        updateConfig.setId(config.getId());
-        updateConfig.setLastCrawlTime(new Date());
-        crawlConfigService.update(updateConfig);
-
-        // Insert crawl_log entry with status=running
-        CrawlLog crawlLog = new CrawlLog();
-        crawlLog.setSiteName(config.getSiteName());
-        crawlLog.setKeyword(config.getKeyword());
-        crawlLog.setStatus("running");
-        crawlLog.setStartTime(new Date());
-        crawlLog.setConfigId(config.getId());
-        crawlLogService.insert(crawlLog);
-
-        String scriptFile = getSiteScript(config.getSiteName());
-        if (scriptFile == null) {
-            log.warn("No script mapping for site: {}", config.getSiteName());
-            CrawlLog failedLog = new CrawlLog();
-            failedLog.setId(crawlLog.getId());
-            failedLog.setStatus("failed");
-            failedLog.setErrorMsg("No script mapping for site: " + config.getSiteName());
-            failedLog.setEndTime(new Date());
-            crawlLogService.update(failedLog);
-            return;
+        // 如果有 pending 记录，更新为 running；否则新建
+        CrawlLog crawlLog;
+        if (pendingLogId != null) {
+            crawlLog = crawlLogService.selectById(pendingLogId);
+            if (crawlLog != null) {
+                crawlLog.setStatus("running");
+                crawlLog.setStartTime(new Date());
+                crawlLogService.update(crawlLog);
+            } else {
+                crawlLog = new CrawlLog();
+                crawlLog.setSiteName(config.getSiteName());
+                crawlLog.setKeyword(config.getKeyword());
+                crawlLog.setStatus("running");
+                crawlLog.setStartTime(new Date());
+                crawlLog.setConfigId(config.getId());
+                crawlLogService.insert(crawlLog);
+            }
+        } else {
+            crawlLog = new CrawlLog();
+            crawlLog.setSiteName(config.getSiteName());
+            crawlLog.setKeyword(config.getKeyword());
+            crawlLog.setStatus("running");
+            crawlLog.setStartTime(new Date());
+            crawlLog.setConfigId(config.getId());
+            crawlLogService.insert(crawlLog);
         }
 
-        String scriptPath = "/root/workspace/RuoYi-backend/crawlers/" + scriptFile;
-        String escapedKeyword = config.getKeyword();
-        int maxResults = config.getMaxResults() != null ? config.getMaxResults() : 10;
-
-        // 创建日志目录并定义日志文件路径
-        String logDir = "/root/workspace/RuoYi-backend/crawlers/logs";
-        new java.io.File(logDir).mkdirs();
-        String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
-
-        String command = String.format(
-            "python3 -u %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1",
-            scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId()
-        );
-
         try {
+            String scriptFile = getSiteScript(config.getSiteName());
+            if (scriptFile == null) {
+                log.warn("No script mapping for site: {}", config.getSiteName());
+                CrawlLog failedLog = new CrawlLog();
+                failedLog.setId(crawlLog.getId());
+                failedLog.setStatus("failed");
+                failedLog.setErrorMsg("No script mapping for site: " + config.getSiteName());
+                failedLog.setEndTime(new Date());
+                crawlLogService.update(failedLog);
+                return;
+            }
+
+            String scriptPath = "/root/workspace/RuoYi-backend/crawlers/" + scriptFile;
+            String escapedKeyword = config.getKeyword();
+            int maxResults = config.getMaxResults() != null ? config.getMaxResults() : 10;
+
+            // 创建日志目录并定义日志文件路径
+            String logDir = "/root/workspace/RuoYi-backend/crawlers/logs";
+            new java.io.File(logDir).mkdirs();
+            String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
+
+            String command = String.format(
+                "python3 -u %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1",
+                scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId()
+            );
+
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             Process process = pb.start();
             
@@ -189,9 +237,9 @@ public class CrawlScheduler {
             }
             
             int exitCode;
-            boolean finished = process.waitFor(1, TimeUnit.HOURS);
+            boolean finished = process.waitFor(60, TimeUnit.MINUTES);
             if (!finished) {
-                log.warn("Crawl for config id={} exceeded 1h timeout, force killing", config.getId());
+                log.warn("Crawl for config id={} exceeded 60min timeout, force killing", config.getId());
                 process.destroyForcibly();
                 exitCode = -1;
             } else {
@@ -205,12 +253,13 @@ public class CrawlScheduler {
                 String errorDetail = output.length() > 2000 
                     ? output.substring(output.length() - 2000) 
                     : output.toString();
+                String timeoutSuffix = (exitCode == -1) ? " [超时: 爬取运行超过60分钟，已强制终止]" : "";
                 log.warn("Crawl script exited with code {} for config id={}: {}", 
                          exitCode, config.getId(), errorDetail.substring(0, Math.min(200, errorDetail.length())));
                 CrawlLog failedLog = new CrawlLog();
                 failedLog.setId(crawlLog.getId());
                 failedLog.setStatus("failed");
-                failedLog.setErrorMsg("Exit code " + exitCode + ": " + errorDetail.trim());
+                failedLog.setErrorMsg("Exit code " + exitCode + ": " + errorDetail.trim() + timeoutSuffix);
                 failedLog.setEndTime(new Date());
                 crawlLogService.update(failedLog);
             }
@@ -222,6 +271,12 @@ public class CrawlScheduler {
             failedLog.setErrorMsg("Script execution error: " + e.getMessage());
             failedLog.setEndTime(new Date());
             crawlLogService.update(failedLog);
+        } finally {
+            // 任务结束时（成功/失败/异常）更新 last_crawl_time
+            CrawlConfig updateConfig = new CrawlConfig();
+            updateConfig.setId(config.getId());
+            updateConfig.setLastCrawlTime(new Date());
+            crawlConfigService.update(updateConfig);
         }
     }
 

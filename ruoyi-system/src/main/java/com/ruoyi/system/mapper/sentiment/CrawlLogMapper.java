@@ -15,4 +15,7 @@ public interface CrawlLogMapper {
     long selectFailedCount();
     int selectRunningCountByConfigId(Long configId);
     int selectTotalRunningCount();
+    int selectPendingOrRunningCountByConfigId(Long configId);
 }
+
+

@@ -37,7 +37,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from process_cleanup import cleanup_child_processes, kill_orphaned_processes
+from process_cleanup import kill_child_group, kill_orphaned_processes, start_xvfb
 from common_db import get_db, save_social_post, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB
 
@@ -74,8 +74,8 @@ def crawl(keywords, max_per_kw):
     """
     import subprocess
     # 启动 Xvfb 虚拟显示
-    xvfb_proc = subprocess.Popen(["Xvfb", ":98", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"])
-    os.environ["DISPLAY"] = ":98"
+    xvfb_proc, display = start_xvfb()
+    os.environ["DISPLAY"] = f":{display}"
     time.sleep(0.5)
     print("=== Threads 爬虫 ===")
     os.makedirs(CHROME_PROFILE_DIR, exist_ok=True)
