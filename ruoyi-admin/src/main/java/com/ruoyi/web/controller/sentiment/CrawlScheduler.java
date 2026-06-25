@@ -78,7 +78,7 @@ public class CrawlScheduler {
         log.info("Found {} due crawl config(s) to run.", dueConfigs.size());
 
         for (CrawlConfig config : dueConfigs) {
-            // Safety check 1: skip if this config already has a running or pending crawl
+            // Skip if this config already has a running or pending crawl
             int pendingOrRunning = crawlLogService.selectPendingOrRunningCountByConfigId(config.getId());
             if (pendingOrRunning > 0) {
                 log.info("Skipping config id={} ({}) — already {} pending/running crawl(s)",
@@ -86,15 +86,18 @@ public class CrawlScheduler {
                 continue;
             }
 
-            // Safety check 2: skip if global concurrent limit reached
-            if (crawlSemaphore.availablePermits() <= 0) {
-                log.info("Skipping config id={} ({}) — max concurrent crawls ({}) reached",
-                         config.getId(), config.getSiteName(), MAX_CONCURRENT);
-                continue;
-            }
+            // Create pending record (visible in UI immediately)
+            CrawlLog pendingLog = new CrawlLog();
+            pendingLog.setSiteName(config.getSiteName());
+            pendingLog.setKeyword(config.getKeyword());
+            pendingLog.setStatus("pending");
+            pendingLog.setConfigId(config.getId());
+            pendingLog.setStartTime(new Date());
+            crawlLogService.insert(pendingLog);
 
-            // Trigger crawl asynchronously on bounded thread pool
-            CompletableFuture.runAsync(() -> triggerCrawl(config, null), crawlExecutor);
+            // Submit to thread pool — blocks waiting for semaphore permit
+            final Long pendingLogId = pendingLog.getId();
+            CompletableFuture.runAsync(() -> triggerCrawl(config, pendingLogId), crawlExecutor);
         }
     }
 
@@ -136,6 +139,24 @@ public class CrawlScheduler {
             triggered++;
         }
         return triggered;
+    }
+
+    /**
+     * 手动触发单个平台爬取。
+     * 与 triggerAllEnabled 相同的 pending 逻辑，但只处理一个配置。
+     */
+    public void triggerSingleCrawl(CrawlConfig config) {
+        // 插入 pending 记录
+        CrawlLog pendingLog = new CrawlLog();
+        pendingLog.setSiteName(config.getSiteName());
+        pendingLog.setKeyword(config.getKeyword());
+        pendingLog.setStatus("pending");
+        pendingLog.setConfigId(config.getId());
+        pendingLog.setStartTime(new Date());
+        crawlLogService.insert(pendingLog);
+
+        final Long pendingLogId = pendingLog.getId();
+        CompletableFuture.runAsync(() -> triggerCrawl(config, pendingLogId), crawlExecutor);
     }
 
     public int getMaxConcurrent() {

@@ -36,6 +36,7 @@ from atproto import Client
 from atproto_client.exceptions import ModelError
 import time
 import requests
+from process_cleanup import ensure_clean_before_crawl
 from common_db import get_db, save_social_post, save_social_comment, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from retry_utils import with_retry
 from crawler_config import DB, IMAGE_DIR, ALL_KEYWORDS
@@ -325,24 +326,23 @@ def crawl(keywords, max_per_kw):
     items_found = 0
     items_new = 0
     items_updated = 0
+    def has_media(post):
+        embed = getattr(post.record, 'embed', None)
+        if not embed: return 0
+        if hasattr(embed, 'images') and embed.images: return 2
+        if hasattr(embed, 'external') and getattr(embed.external, 'thumb', None): return 1
+        return 0
+
     try:
         for kw in keywords:
             display_kw = KEYWORD_DISPLAY.get(kw, kw)
             print(f"\n--- 搜索: {kw} ---")
             # 调用 Bluesky API 搜索帖子
             try:
-                result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": min(max_per_kw * 3, 100), "sort": "latest"}), description=f"搜索帖子{kw}")
+                result = with_retry(lambda: client.app.bsky.feed.search_posts({"q": kw, "limit": max_per_kw, "sort": "latest"}), description=f"搜索帖子{kw}")
             except ModelError as e:
                 print(f"  [WARN] 搜索结果包含不支持的embed类型，跳过此关键词: {e}")
                 continue
-
-            # 按媒体类型排序：有图片的帖子优先（embed.images > embed.external.thumb > 无图）
-            def has_media(post):
-                embed = getattr(post.record, 'embed', None)
-                if not embed: return 0
-                if hasattr(embed, 'images') and embed.images: return 2
-                if hasattr(embed, 'external') and getattr(embed.external, 'thumb', None): return 1
-                return 0
 
             sorted_posts = sorted(result.posts, key=has_media, reverse=True)
             cnt = 0
@@ -378,6 +378,11 @@ def crawl(keywords, max_per_kw):
                     cnt += 1
                 except Exception as e: print(f"  [ERR] {e}")
                 time.sleep(1)
+            conn.commit()
+            # 释放关键词数据，避免内存堆积
+            sorted_posts = None
+            result = None
+            import gc; gc.collect()
             print(f"  {kw}: {cnt}条")
     finally: cur.close(); conn.close()
     print("=== 完成 ===")
@@ -412,6 +417,7 @@ def parse_args():
     return parser.parse_args()
 
 def main():
+    ensure_clean_before_crawl()
     """
     主函数：解析参数 → 执行爬虫 → 更新日志。
 

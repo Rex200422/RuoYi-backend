@@ -73,22 +73,16 @@ public class CrawlConfigController extends BaseController {
             return AjaxResult.error("Crawl config is disabled");
         }
 
-        // Create a crawl_log entry with status=running
-        CrawlLog crawlLog = new CrawlLog();
-        crawlLog.setSiteName(config.getSiteName());
-        crawlLog.setKeyword(config.getKeyword());
-        crawlLog.setStatus("running");
-        crawlLog.setStartTime(new Date());
-        crawlLog.setConfigId(config.getId());
-        crawlLogService.insert(crawlLog);
+        // 检查是否已有 pending 或 running 任务
+        int pendingOrRunning = crawlLogService.selectPendingOrRunningCountByConfigId(config.getId());
+        if (pendingOrRunning > 0) {
+            return AjaxResult.error("该平台已有正在运行或等待中的任务");
+        }
 
-        // Run Python script asynchronously
-        runCrawlScript(config, crawlLog.getId());
+        // 通过 CrawlScheduler 调度（受信号量限制，正确处理 pending 状态）
+        crawlScheduler.triggerSingleCrawl(config);
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("message", "Crawl triggered successfully");
-        result.put("logId", crawlLog.getId());
-        return AjaxResult.success(result);
+        return AjaxResult.success("已触发 " + config.getSiteName() + " 爬取任务");
     }
 
     /**
@@ -102,51 +96,7 @@ public class CrawlConfigController extends BaseController {
         return AjaxResult.success("已触发 " + triggered + " 个爬取任务（并发受" + crawlScheduler.getMaxConcurrent() + "个限制）");
     }
 
-    /**
-     * Run the crawl Python script as a subprocess asynchronously.
-     * The script is responsible for updating the crawl_log entry with status, items_found, items_saved, and end_time.
-     */
-    private void runCrawlScript(CrawlConfig config, Long logId) {
-        String scriptFile = getSiteScript(config.getSiteName());
-        if (scriptFile == null) {
-            log.warn("No script mapping for site: {}", config.getSiteName());
-            return;
-        }
 
-        String scriptPath = "/root/workspace/RuoYi-backend/crawlers/" + scriptFile;
-
-        // Escape keyword for shell
-        String escapedKeyword = config.getKeyword().replace("\"", "\\\"");
-        String command = String.format(
-            "python3 %s --config-id %d --keyword \"%s\" --max %d --log-id %d",
-            scriptPath, config.getId(), escapedKeyword,
-            config.getMaxResults() != null ? config.getMaxResults() : 10,
-            logId
-        );
-
-        new Thread(() -> {
-            try {
-                ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-                process.waitFor();
-                log.info("Crawl script finished for config {}, exit code: {}", config.getId(), process.exitValue());
-            } catch (Exception e) {
-                log.error("Failed to run crawl script for config {}: {}", config.getId(), e.getMessage());
-                // Update log to failed on script execution error
-                CrawlLog failedLog = new CrawlLog();
-                failedLog.setId(logId);
-                failedLog.setStatus("failed");
-                failedLog.setErrorMsg("Script execution error: " + e.getMessage());
-                failedLog.setEndTime(new Date());
-                crawlLogService.update(failedLog);
-            }
-        }, "crawl-exec-" + config.getId()).start();
-    }
-
-    /**
-     * Map site name to Python spider script filename.
-     */
     private String getSiteScript(String siteName) {
         if (siteName == null) return null;
         switch (siteName.toLowerCase().trim()) {

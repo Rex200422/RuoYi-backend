@@ -44,6 +44,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import shutil
 
+from process_cleanup import ensure_clean_before_crawl
 from common_db import get_db, save_social_post, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB
 
@@ -288,6 +289,7 @@ def parse_args():
     return parser.parse_args()
 
 def main():
+    ensure_clean_before_crawl()
     """
     主函数：解析参数 → 执行爬虫 → 更新日志。
     """

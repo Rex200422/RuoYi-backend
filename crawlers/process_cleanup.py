@@ -67,7 +67,7 @@ def start_xvfb(display=None):
 
 
 def kill_child_group(process_obj):
-    """安全清理子进程组"""
+    """安全清理子进程组：只杀 start_new_session=True 创建的独立进程组"""
     if process_obj is None:
         return
     try:
@@ -80,56 +80,77 @@ def kill_child_group(process_obj):
 
 
 def kill_orphaned_processes():
-    """启动前清理：只杀运行超过30分钟的残留进程"""
-    kill_threshold = 1800
+    """
+    启动前清理：杀掉所有孤儿Chrome/Playwright进程和Xvfb
+    不限制时间阈值——任何孤儿进程都应该清理，避免内存积累导致OOM
+    """
+    # 清理所有Playwright/Chrome相关孤儿进程（不限时间）
     patterns = [
-        ("chrome-headless-shell", "chromium"),
-        ("chromedriver", "chromedriver"),
+        "chrome-headless-shell",
+        "chromium-browser",
+        "chromedriver",
     ]
 
-    for keyword, display_name in patterns:
+    for keyword in patterns:
         try:
             result = subprocess.run(
                 ["pgrep", "-f", keyword],
                 capture_output=True, text=True, timeout=5
             )
             pids = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
-            killed = 0
-            for pid_str in pids:
-                try:
-                    stat = subprocess.run(
-                        ["ps", "-o", "etimes=", "-p", pid_str],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    elapsed = int(stat.stdout.strip())
-                    if elapsed > kill_threshold:
+            if pids:
+                for pid_str in pids:
+                    try:
                         os.kill(int(pid_str), signal.SIGKILL)
-                        killed += 1
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass
-            if killed > 0:
-                print(f"  [清理] 杀掉 {killed} 个残留 {display_name} 进程（运行超过{kill_threshold//60}分钟）")
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                print(f"  [清理] 杀掉 {len(pids)} 个孤儿 {keyword} 进程")
         except Exception:
             pass
 
+    # 清理所有Xvfb进程
     try:
         result = subprocess.run(
-            ["pgrep", "-a", "Xvfb"], capture_output=True, text=True, timeout=5
+            ["pgrep", "-f", "Xvfb"],
+            capture_output=True, text=True, timeout=5
         )
-        active_displays = set()
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
-                continue
-            m = re.search(r":(\d+)", line)
-            if m:
-                active_displays.add(m.group(1))
-        for lock in glob.glob("/tmp/.X*-lock"):
-            m = re.search(r"\.X(\d+)-lock", lock)
-            if m and m.group(1) not in active_displays:
+        pids = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+        if pids:
+            for pid_str in pids:
                 try:
-                    os.remove(lock)
-                    print(f"  [清理] 删除孤立锁文件 {lock}")
-                except Exception:
+                    os.kill(int(pid_str), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
                     pass
+            print(f"  [清理] 杀掉 {len(pids)} 个孤儿 Xvfb 进程")
+    except Exception:
+        pass
+
+    # 清理孤立的 lock 文件
+    for lock in glob.glob("/tmp/.X*-lock"):
+        try:
+            os.remove(lock)
+        except Exception:
+            pass
+
+
+def ensure_clean_before_crawl():
+    """
+    爬虫启动前确保环境干净：
+    1. 杀掉所有孤儿Chrome进程（防止内存积累导致OOM）
+    2. 清理Xvfb残留
+    3. 打印当前内存状态
+    """
+    kill_orphaned_processes()
+
+    # 打印内存状态供调试
+    try:
+        with open("/proc/meminfo") as f:
+            meminfo = f.read()
+        available = int(re.search(r"MemAvailable:\s+(\d+)", meminfo).group(1)) // 1024
+        total = int(re.search(r"MemTotal:\s+(\d+)", meminfo).group(1)) // 1024
+        used = total - available
+        print(f"  [内存] {used}MB / {total}MB (可用 {available}MB)")
+        if available < 1024:
+            print(f"  [警告] 可用内存不足 1GB，爬虫可能因OOM被杀")
     except Exception:
         pass

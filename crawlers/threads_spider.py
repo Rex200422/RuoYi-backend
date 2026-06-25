@@ -37,7 +37,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from process_cleanup import kill_child_group, kill_orphaned_processes, start_xvfb
+from process_cleanup import kill_child_group, kill_orphaned_processes, ensure_clean_before_crawl, start_xvfb, ensure_clean_before_crawl
 from common_db import get_db, save_social_post, update_crawl_log, update_crawl_log_error, update_config_last_crawl, update_crawl_log_start
 from crawler_config import DB
 
@@ -249,7 +249,7 @@ def main():
     args = parse_args()
 
     # 启动前清理残留进程
-    kill_orphaned_processes()
+    ensure_clean_before_crawl()
 
     if args.keyword:
         keywords = [k.strip() for k in args.keyword.split(",") if k.strip()]
