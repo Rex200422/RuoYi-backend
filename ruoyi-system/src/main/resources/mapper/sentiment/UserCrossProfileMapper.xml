@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.sentiment.UserCrossProfileMapper">
+
+    <resultMap type="com.ruoyi.system.domain.sentiment.UserCrossProfile" id="Result">
+        <id property="id" column="id"/>
+        <result property="username" column="username"/>
+        <result property="queryTime" column="query_time"/>
+        <result property="redditStatus" column="reddit_status"/>
+        <result property="redditData" column="reddit_data"/>
+        <result property="instagramStatus" column="instagram_status"/>
+        <result property="instagramData" column="instagram_data"/>
+        <result property="tiktokStatus" column="tiktok_status"/>
+        <result property="tiktokData" column="tiktok_data"/>
+        <result property="twitterStatus" column="twitter_status"/>
+        <result property="twitterData" column="twitter_data"/>
+        <result property="twitchStatus" column="twitch_status"/>
+        <result property="twitchData" column="twitch_data"/>
+        <result property="tumblrStatus" column="tumblr_status"/>
+        <result property="tumblrData" column="tumblr_data"/>
+        <result property="telegramStatus" column="telegram_status"/>
+        <result property="telegramData" column="telegram_data"/>
+        <result property="claimedCount" column="claimed_count"/>
+        <result property="rawResult" column="raw_result"/>
+        <result property="errorMsg" column="error_msg"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.ruoyi.system.domain.sentiment.UserCrossProfile" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_cross_profile
+            (username, query_time,
+             reddit_status, reddit_data, instagram_status, instagram_data,
+             tiktok_status, tiktok_data, twitter_status, twitter_data,
+             twitch_status, twitch_data, tumblr_status, tumblr_data,
+             telegram_status, telegram_data,
+             claimed_count, raw_result, error_msg)
+        VALUES
+            (#{username}, #{queryTime},
+             #{redditStatus}, #{redditData}, #{instagramStatus}, #{instagramData},
+             #{tiktokStatus}, #{tiktokData}, #{twitterStatus}, #{twitterData},
+             #{twitchStatus}, #{twitchData}, #{tumblrStatus}, #{tumblrData},
+             #{telegramStatus}, #{telegramData},
+             #{claimedCount}, #{rawResult}, #{errorMsg})
+    </insert>
+
+    <select id="selectByPage" resultMap="Result">
+        SELECT * FROM user_cross_profile ORDER BY query_time DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="selectByUsername" resultMap="Result">
+        SELECT * FROM user_cross_profile WHERE username = #{username} ORDER BY query_time DESC LIMIT 1
+    </select>
+
+    <select id="countAll" resultType="int">
+        SELECT COUNT(*) FROM user_cross_profile
+    </select>
+
+</mapper>
