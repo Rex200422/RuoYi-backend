@@ -229,7 +229,7 @@ public class CrawlScheduler {
             String logFilePath = logDir + "/" + config.getSiteName() + "_" + crawlLog.getId() + ".log";
 
             String command = String.format(
-                "python3 -u %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1",
+                "/apps/miniconda3/bin/python3 -u %s --config-id %d --keyword \"%s\" --max %d --log-id %d 2>&1",
                 scriptPath, config.getId(), escapedKeyword, maxResults, crawlLog.getId()
             );
 

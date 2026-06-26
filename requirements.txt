@@ -1,0 +1,15 @@
+# 轻舟舆情系统 - Python 依赖（conda base 环境）
+# 使用方法: /apps/miniconda3/bin/pip install -r requirements.txt
+
+# 核心
+atproto==0.0.68
+pymysql==1.2.0
+requests==2.32.5
+
+# 浏览器自动化
+selenium==4.44.0
+undetected-chromedriver==3.5.5
+playwright==1.60.0
+
+# YouTube
+yt-dlp==2026.6.9
