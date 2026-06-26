@@ -17,6 +17,7 @@ public class CrossProfileController {
 
     @Autowired private IHighFrequencyUserService hfUserService;
     @Autowired private IUserCrossProfileService profileService;
+    @Autowired private CrossProfileScheduler crossProfileScheduler;
 
     /** 查看高频用户 */
     @GetMapping("/highFreq")
@@ -47,5 +48,18 @@ public class CrossProfileController {
             return AjaxResult.error("未找到该用户的画像数据");
         }
         return AjaxResult.success(profile);
+    }
+    /** 手动触发一次完整流程 */
+    @PostMapping("/trigger")
+    public AjaxResult trigger() {
+        crossProfileScheduler.runDailyProfile();
+        return AjaxResult.success("已触发跨平台画像任务");
+    }
+
+    /** 手动触发单个用户查询 */
+    @PostMapping("/trigger/{username}")
+    public AjaxResult triggerUser(@PathVariable String username) {
+        crossProfileScheduler.triggerManual(username);
+        return AjaxResult.success("已触发用户 " + username + " 的画像查询");
     }
 }

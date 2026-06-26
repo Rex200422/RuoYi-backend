@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
 public class CrossProfileScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(CrossProfileScheduler.class);
-    private static final String PYTHON = "/apps/miniconda3/bin/python3";
+    private static final String PYTHON = "/usr/bin/python3";
     private static final String SPIDER_DIR = "/root/workspace/RuoYi-backend/crawlers";
 
     @Autowired private IHighFrequencyUserService hfUserService;
@@ -84,7 +84,7 @@ public class CrossProfileScheduler {
         List<Map<String, Object>> stats = jdbcTemplate.queryForList(
             "SELECT author, site_name, COUNT(*) as cnt " +
             "FROM social_post " +
-            "WHERE create_time >= ? AND author IS NOT NULL AND author != '' " +
+            "WHERE created_at >= ? AND author IS NOT NULL AND author != '' " +
             "GROUP BY author, site_name " +
             "HAVING cnt >= 3 " +
             "ORDER BY cnt DESC",
