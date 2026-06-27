@@ -65,6 +65,35 @@ CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_
 # 文本处理工具
 # ============================================================
 
+
+def extract_tumblr_username(article):
+    """从 Tumblr article 标签中提取用户名"""
+    try:
+        # 尝试从链接中提取用户名
+        links = article.find_elements(By.TAG_NAME, "a")
+        for link in links:
+            href = link.get_attribute("href") or ""
+            # Tumblr 链接格式: https://username.tumblr.com/post/...
+            if "tumblr.com" in href and "/post/" in href:
+                parts = href.replace("https://", "").split(".")
+                if parts:
+                    return parts[0]
+        
+        # 尝试从 span 中提取用户名（@username 格式）
+        spans = article.find_elements(By.XPATH, ".//span[contains(@class, 'username')]")
+        for span in spans:
+            text = span.text.strip()
+            if text.startswith("@"):
+                return text[1:]
+        
+        # 尝试从 data 属性提取
+        author_el = article.find_elements(By.XPATH, ".//a[contains(@class, 'username')]")
+        if author_el:
+            return author_el[0].text.strip()
+            
+    except Exception:
+        pass
+    return "Tumblr User"
 def clean_text(text):
     """
     清理并格式化提取出的文本。
@@ -218,7 +247,7 @@ def crawl(keywords, max_per_kw):
                             "source_board": "search",
                             "post_id": post_id,
                             "title": clean_text(full_text)[:100],  # 取前100个字符做标题
-                            "author": "Tumblr User",
+                            "author": extract_tumblr_username(article),
                             "publish_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                             "like_count": 0,
                             "comment_count": 0,

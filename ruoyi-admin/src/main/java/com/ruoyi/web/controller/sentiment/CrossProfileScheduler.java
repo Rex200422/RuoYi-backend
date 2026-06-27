@@ -41,7 +41,7 @@ public class CrossProfileScheduler {
     /**
      * 每天凌晨2点执行：
      * 1. 统计3天内高频用户 → high_frequency_user 表
-     * 2. 取 top10 → 调用 Python 提取跨平台信息
+     * 2. 取 top10000 → 调用 Python 提取跨平台信息
      * 3. 存入 user_cross_profile 表
      */
     @Scheduled(cron = "0 0 2 * * ?")
@@ -52,14 +52,14 @@ public class CrossProfileScheduler {
             collectHighFrequencyUsers();
             log.info("Step 1 done: high_frequency_user updated");
 
-            // Step 2: 取 top10（去重用户名，取最高频的）
+            // Step 2: 取 top10000（去重用户名，取最高频的）
             List<Map<String, Object>> topUsers = jdbcTemplate.queryForList(
                 "SELECT username, SUM(post_count) as total_posts " +
                 "FROM high_frequency_user " +
                 "WHERE window_start >= DATE_SUB(NOW(), INTERVAL 3 DAY) " +
                 "GROUP BY username " +
                 "ORDER BY total_posts DESC " +
-                "LIMIT 10"
+                "LIMIT 100"
             );
             log.info("Step 2 done: found {} top users", topUsers.size());
 
@@ -251,16 +251,16 @@ public class CrossProfileScheduler {
         if (blueskyHandle.contains("@")) {
             String[] parts = blueskyHandle.split("@");
             if (parts.length >= 2) {
-                return parts[1]; // @ 后的第一个单词
+                return parts[1].split("\\.")[0]; // @ 后第一个点前面的部分
             }
         }
         
-        // 处理 username.bsky.social 格式
-        if (blueskyHandle.contains(".bsky.social")) {
-            return blueskyHandle.substring(0, blueskyHandle.indexOf(".bsky.social")); // 取 . 前的第一部分
+        // 统一处理：取第一个点前面的部分
+        if (blueskyHandle.contains(".")) {
+            return blueskyHandle.split("\\.")[0]; // 取第一个点前面的部分
         }
         
-        // 其他格式（纯域名），无法匹配
-        return null;
+        // 纯用户名（无点），直接返回
+        return blueskyHandle;
     }
 }
