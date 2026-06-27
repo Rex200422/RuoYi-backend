@@ -155,14 +155,19 @@ def fetch_search_results(driver, keyword, limit):
             data = json.loads(script.string)
             if isinstance(data, dict) and "itemListElement" in data:
                 for item in data["itemListElement"]:
+                    url = item.get("url", "")
                     posts.append({
+                        "id": hashlib.md5(url.encode()).hexdigest()[:10],
                         "title": item.get("name", ""),
-                        "url": item.get("url", ""),
+                        "url": url,
                         "author": "unknown",
+                        "subreddit": "",
                         "score": 0,
                         "num_comments": 0,
-                        "permalink": item.get("url", "").replace("https://www.reddit.com", ""),
-                        "created_utc": 0
+                        "selftext": "",
+                        "permalink": url.replace("https://www.reddit.com", ""),
+                        "created_utc": 0,
+                        "url_overridden_by_dest": ""
                     })
         except:
             pass
@@ -171,18 +176,24 @@ def fetch_search_results(driver, keyword, limit):
     if not posts:
         for a in soup.find_all("a", attrs={"data-testid": "post-title"}):
             href = a.get("href", "")
+            post_id = hashlib.md5(href.encode()).hexdigest()[:10]
             posts.append({
+                "id": post_id,
                 "title": a.get_text(strip=True),
                 "url": f"https://www.reddit.com{href}" if href.startswith("/r/") else href,
                 "author": "unknown",
+                "subreddit": href.split("/")[2] if href.startswith("/r/") and len(href.split("/")) > 2 else "",
                 "score": 0,
                 "num_comments": 0,
+                "selftext": "",
                 "permalink": href if href.startswith("/r/") else "",
-                "created_utc": 0
+                "created_utc": 0,
+                "url_overridden_by_dest": ""
             })
 
     print(f"  [INFO] HTML提取到 {len(posts)} 条帖子")
-    return posts[:limit]
+    # 包装为 {"data": {...}} 格式以兼容 crawl 函数
+    return [{"data": p} for p in posts[:limit]]
 
 
 def fetch_comments(driver, permalink):
@@ -194,15 +205,15 @@ def fetch_comments(driver, permalink):
         time.sleep(3)
 
         raw = driver.find_element(By.TAG_NAME, "body").text
-        data = json.loads(raw)
 
-        if len(data) < 2:
-            return comments
-
-        for item in data[1]["data"]["children"]:
-            if item.get("kind") != "t1":
-                continue
-            comments.append(item["data"])
+        # 检查返回内容是否是JSON（不是HTML block页面）
+        if raw.strip().startswith("{") or raw.strip().startswith("["):
+            data = json.loads(raw)
+            if len(data) >= 2:
+                for item in data[1]["data"]["children"]:
+                    if item.get("kind") != "t1":
+                        continue
+                    comments.append(item["data"])
 
     except Exception:
         pass
