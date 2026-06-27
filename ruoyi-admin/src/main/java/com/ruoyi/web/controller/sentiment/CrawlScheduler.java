@@ -30,21 +30,24 @@ import com.ruoyi.system.service.sentiment.ICrawlLogService;
 public class CrawlScheduler {
     @PostConstruct
     public void init() {
-        // 服务启动时将所有 running 状态的任务标记为 failed
-        CrawlLog query = new CrawlLog();
-        query.setStatus("running");
-        List<CrawlLog> runningLogs = crawlLogService.selectList(query);
-        if (runningLogs != null && !runningLogs.isEmpty()) {
-            for (CrawlLog logEntry : runningLogs) {
-                CrawlLog update = new CrawlLog();
-                update.setId(logEntry.getId());
-                update.setStatus("failed");
-                update.setErrorMsg("服务重启，任务被中断");
-                update.setEndTime(new Date());
-                crawlLogService.update(update);
-                log.warn("标记 crawl_log id={} ({}) 为 failed — 服务重启", logEntry.getId(), logEntry.getSiteName());
+        // 服务启动时将所有 running/pending 状态的任务标记为 failed
+        // pending 任务在重启后线程池已丢失，永远不会被执行
+        for (String status : new String[]{"running", "pending"}) {
+            CrawlLog query = new CrawlLog();
+            query.setStatus(status);
+            List<CrawlLog> logs = crawlLogService.selectList(query);
+            if (logs != null && !logs.isEmpty()) {
+                for (CrawlLog logEntry : logs) {
+                    CrawlLog update = new CrawlLog();
+                    update.setId(logEntry.getId());
+                    update.setStatus("failed");
+                    update.setErrorMsg("服务重启，任务被自动终止");
+                    update.setEndTime(new Date());
+                    crawlLogService.update(update);
+                    log.warn("标记 crawl_log id={} ({}) 为 failed — 服务重启", logEntry.getId(), logEntry.getSiteName());
+                }
+                log.info("启动时清理了 {} 条 {} 状态的爬取任务", logs.size(), status);
             }
-            log.info("启动时清理了 {} 条 running 状态的爬取任务", runningLogs.size());
         }
     }
 
