@@ -104,7 +104,7 @@ public class CrossProfileScheduler {
 
         if (!users.isEmpty()) {
             // 先清理旧数据
-            hfUserService.deleteByWindowStartBefore(windowStart);
+            jdbcTemplate.update("DELETE FROM high_frequency_user");
             hfUserService.batchInsertOrUpdate(users);
             log.info("Saved {} high frequency users", users.size());
         }
@@ -115,12 +115,22 @@ public class CrossProfileScheduler {
         log.info("Processing user: {}", username);
 
         try {
-            // 检查是否已查询过
-            UserCrossProfile existing = profileService.selectByUsername(username);
-            if (existing != null) {
-                log.info("User {} already profiled, skipping", username);
+            // 解析 Bluesky 用户名，提取匹配用户名
+            String matchUsername = parseBlueskyUsername(username);
+            if (matchUsername == null) {
+                log.info("User {} is a custom domain, cannot match on other platforms, skipping", username);
                 return;
             }
+            
+            // 检查是否已查询过（使用解析后的用户名）
+            UserCrossProfile existing = profileService.selectByUsername(matchUsername);
+            if (existing != null) {
+                log.info("User {} already profiled, skipping", matchUsername);
+                return;
+            }
+            
+            // 更新 username 为解析后的版本
+            username = matchUsername;
 
             // 构建命令
             List<String> cmd = Arrays.asList(
@@ -154,7 +164,7 @@ public class CrossProfileScheduler {
             }
 
             // 解析 JSON 结果文件
-            String jsonPath = SPIDER_DIR + "/logs/cross_" + username + "_0.json";
+            String jsonPath = SPIDER_DIR + "/logs/cross_" + username + ".json";
             File jsonFile = new File(jsonPath);
             if (!jsonFile.exists()) {
                 saveErrorResult(username, "JSON output file not found: " + jsonPath);
@@ -228,5 +238,29 @@ public class CrossProfileScheduler {
     /** 手动触发：指定用户名查询 */
     public void triggerManual(String username) {
         CompletableFuture.runAsync(() -> processUser(username), executor);
+    }
+
+
+    /** 解析 Bluesky 用户名，提取用于跨平台匹配的用户名 */
+    private String parseBlueskyUsername(String blueskyHandle) {
+        if (blueskyHandle == null || blueskyHandle.isEmpty()) {
+            return null;
+        }
+        
+        // 处理 @username@domain 格式
+        if (blueskyHandle.contains("@")) {
+            String[] parts = blueskyHandle.split("@");
+            if (parts.length >= 2) {
+                return parts[1]; // @ 后的第一个单词
+            }
+        }
+        
+        // 处理 username.bsky.social 格式
+        if (blueskyHandle.contains(".bsky.social")) {
+            return blueskyHandle.substring(0, blueskyHandle.indexOf(".bsky.social")); // 取 . 前的第一部分
+        }
+        
+        // 其他格式（纯域名），无法匹配
+        return null;
     }
 }

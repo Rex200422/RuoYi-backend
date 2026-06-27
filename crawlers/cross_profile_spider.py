@@ -14,6 +14,40 @@ import argparse
 import requests
 from datetime import datetime
 
+def parse_bluesky_handle(bluesky_handle):
+    """
+    解析 Bluesky handle，提取用于跨平台匹配的用户名
+    
+    规则：
+    - 如果是 @username@domain 格式，取 @ 后的第一个单词
+    - 如果是 username.bsky.social 格式，取 . 前的第一部分
+    - 如果是纯域名（如 reuters.com），返回 None
+    
+    示例：
+    - @elonmusk@bsky.social → elonmusk
+    - babygoldie.bsky.social → babygoldie
+    - reuters.com → None (无法匹配)
+    """
+    if not bluesky_handle:
+        return None
+    
+    # 处理 @username@domain 格式
+    if '@' in bluesky_handle:
+        parts = bluesky_handle.split('@')
+        if len(parts) >= 2:
+            return parts[1]  # @ 后的第一个单词
+    
+    # 处理 username.domain 格式
+    if '.bsky.social' in bluesky_handle:
+        # 标准 Bluesky 格式
+        return bluesky_handle.split('.')[0]
+    
+    # 其他格式（纯域名），无法匹配
+    return None
+
+
+
+
 # 添加 maigret 路径（使用已安装的 socid_extractor）
 sys.path.insert(0, '/root/workspace/maigret')
 
@@ -124,9 +158,9 @@ def main():
         'claimed_count': claimed_count,
         'platforms': result,
     }
-    # 写到文件供 Java 读取
+    # 写到文件供 Java 读取（始终使用 username 作为文件名，不含 log_id）
     output_path = os.path.join(os.path.dirname(__file__), 'logs',
-                                f'cross_{username}_{args.log_id}.json' if args.log_id else f'cross_{username}.json')
+                                f'cross_{username}.json')
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, default=str, indent=2)
