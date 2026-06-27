@@ -21,6 +21,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 
 from proxy_config import PROXIES
+from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup
 from process_cleanup import kill_child_group, kill_orphaned_processes, ensure_clean_before_crawl, start_xvfb, ensure_clean_before_crawl
 from common_db import (
     get_db,

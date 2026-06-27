@@ -88,6 +88,7 @@ def crawl(keywords, max_per_kw):
     # 提取纯 "IP:端口" 给 Chrome 配置代理
     proxy_server = PROXIES["http"].replace("http://", "")
     chrome_options.add_argument(f'--proxy-server={proxy_server}')
+    chrome_options.add_argument("--proxy-bypass-list=<-loopback>")
     chrome_options.add_argument("--lang=zh-CN,zh;q=0.9")
 
     driver = None
