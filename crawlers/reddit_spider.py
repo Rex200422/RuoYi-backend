@@ -22,8 +22,6 @@ from selenium.webdriver.chrome.service import Service
 
 from proxy_config import PROXIES
 from bs4 import BeautifulSoup
-from bs4 import BeautifulSoup
-from bs4 import BeautifulSoup
 from process_cleanup import kill_child_group, kill_orphaned_processes, ensure_clean_before_crawl, start_xvfb, ensure_clean_before_crawl
 from common_db import (
     get_db,
@@ -142,18 +140,49 @@ def save_images(cur, conn, post_id, image_url):
 
 
 def fetch_search_results(driver, keyword, limit):
-    url = f"https://www.reddit.com/search.json?q={keyword}&sort=new&limit={limit}"
-
-    driver.get("https://www.reddit.com")
-    time.sleep(3)
-
+    """使用 Selenium 访问 Reddit 搜索页面，解析 HTML 获取帖子"""
+    url = f"https://www.reddit.com/search/?q={keyword}&sort=new"
     driver.get(url)
-    time.sleep(4)
+    time.sleep(5)
 
-    raw = driver.find_element(By.TAG_NAME, "body").text
-    data = json.loads(raw)
+    page_source = driver.page_source
+    soup = BeautifulSoup(page_source, "html.parser")
+    posts = []
 
-    return data.get("data", {}).get("children", [])
+    # 方式1: 从 JSON-LD 提取
+    for script in soup.find_all("script", {"type": "application/ld+json"}):
+        try:
+            data = json.loads(script.string)
+            if isinstance(data, dict) and "itemListElement" in data:
+                for item in data["itemListElement"]:
+                    posts.append({
+                        "title": item.get("name", ""),
+                        "url": item.get("url", ""),
+                        "author": "unknown",
+                        "score": 0,
+                        "num_comments": 0,
+                        "permalink": item.get("url", "").replace("https://www.reddit.com", ""),
+                        "created_utc": 0
+                    })
+        except:
+            pass
+
+    # 方式2: 从 DOM 提取
+    if not posts:
+        for a in soup.find_all("a", attrs={"data-testid": "post-title"}):
+            href = a.get("href", "")
+            posts.append({
+                "title": a.get_text(strip=True),
+                "url": f"https://www.reddit.com{href}" if href.startswith("/r/") else href,
+                "author": "unknown",
+                "score": 0,
+                "num_comments": 0,
+                "permalink": href if href.startswith("/r/") else "",
+                "created_utc": 0
+            })
+
+    print(f"  [INFO] HTML提取到 {len(posts)} 条帖子")
+    return posts[:limit]
 
 
 def fetch_comments(driver, permalink):

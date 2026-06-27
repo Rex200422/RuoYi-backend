@@ -90,6 +90,9 @@ def crawl(keywords, max_per_kw):
     chrome_options.add_argument(f'--proxy-server={proxy_server}')
     chrome_options.add_argument("--proxy-bypass-list=<-loopback>")
     chrome_options.add_argument("--lang=zh-CN,zh;q=0.9")
+    
+    # 使用系统安装的 ChromeDriver（版本 149，与 Chrome 版本匹配）
+    driver_path = "/usr/bin/chromedriver"
 
     driver = None
     conn = get_db()
@@ -101,7 +104,7 @@ def crawl(keywords, max_per_kw):
 
     try:
         print("正在拉起浏览器 (使用本地已存的身份凭证)...")
-        driver = uc.Chrome(options=chrome_options, user_data_dir=CHROME_PROFILE_DIR)
+        driver = uc.Chrome(options=chrome_options, user_data_dir=CHROME_PROFILE_DIR, driver_executable_path=driver_path)
 
         # 清理可能残留的代理环境变量
         for env_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']:
