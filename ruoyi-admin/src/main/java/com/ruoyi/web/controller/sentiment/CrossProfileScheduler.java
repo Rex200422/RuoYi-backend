@@ -86,7 +86,7 @@ public class CrossProfileScheduler {
             "FROM social_post " +
             "WHERE created_at >= ? AND author IS NOT NULL AND author != '' " +
             "GROUP BY author, site_name " +
-            "HAVING cnt >= 3 " +
+            "HAVING cnt >= 3 AND author != 'unknown' AND author != '' " +
             "ORDER BY cnt DESC",
             windowStart
         );
@@ -102,11 +102,22 @@ public class CrossProfileScheduler {
             users.add(hf);
         }
 
-        if (!users.isEmpty()) {
+        // 预处理 Bluesky 用户名（取第一个点前面的部分）
+        List<HighFrequencyUser> processedUsers = new ArrayList<>();
+        for (HighFrequencyUser hf : users) {
+            if ("Bluesky".equals(hf.getPlatform())) {
+                hf.setUsername(parseBlueskyUsername(hf.getUsername()));
+            }
+            if (hf.getUsername() != null && !hf.getUsername().isEmpty()) {
+                processedUsers.add(hf);
+            }
+        }
+
+        if (!processedUsers.isEmpty()) {
             // 先清理旧数据
             jdbcTemplate.update("DELETE FROM high_frequency_user");
-            hfUserService.batchInsertOrUpdate(users);
-            log.info("Saved {} high frequency users", users.size());
+            hfUserService.batchInsertOrUpdate(processedUsers);
+            log.info("Saved {} high frequency users", processedUsers.size());
         }
     }
 
@@ -129,6 +140,8 @@ public class CrossProfileScheduler {
                 return;
             }
             
+            // 保存原始用户名（用于记录来源）
+            String originalUsername = username;
             // 更新 username 为解析后的版本
             username = matchUsername;
 
@@ -177,7 +190,7 @@ public class CrossProfileScheduler {
 
             // 构建 UserCrossProfile
             UserCrossProfile profile = new UserCrossProfile();
-            profile.setUsername(username);
+            profile.setUsername(originalUsername != null ? originalUsername : username);
             profile.setQueryTime(new Date());
             profile.setClaimedCount(claimedCount);
             profile.setRawResult(mapper.writeValueAsString(root));

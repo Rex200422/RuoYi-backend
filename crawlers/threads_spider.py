@@ -21,6 +21,7 @@ import sys
 import uuid
 import hashlib
 import argparse
+import glob
 import time
 import random
 import datetime
@@ -103,8 +104,14 @@ def crawl(keywords, max_per_kw):
     items_updated = 0
 
     try:
+        # 清理残留的 Chrome Profile 锁文件
+        for lock_file in glob.glob(os.path.join(CHROME_PROFILE_DIR, "Singleton*")):
+            os.remove(lock_file)
+            print(f"  [CLEAN] 删除残留锁文件: {os.path.basename(lock_file)}")
+
         print("正在拉起浏览器 (使用本地已存的身份凭证)...")
-        driver = uc.Chrome(options=chrome_options, user_data_dir=CHROME_PROFILE_DIR, driver_executable_path=driver_path)
+        driver = uc.Chrome(options=chrome_options, user_data_dir=CHROME_PROFILE_DIR,
+                          driver_executable_path=driver_path, version_main=149)
 
         # 清理可能残留的代理环境变量
         for env_key in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']:
