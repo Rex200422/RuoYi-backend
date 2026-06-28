@@ -69,27 +69,39 @@ CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_
 def extract_tumblr_username(article):
     """从 Tumblr article 标签中提取用户名"""
     try:
-        # 尝试从链接中提取用户名
+        # 查找所有 a 标签
         links = article.find_elements(By.TAG_NAME, "a")
         for link in links:
             href = link.get_attribute("href") or ""
-            # Tumblr 链接格式: https://username.tumblr.com/post/...
+            
+            # 方式1: 从链接提取（格式: https://username.tumblr.com/post/...）
             if "tumblr.com" in href and "/post/" in href:
-                parts = href.replace("https://", "").split(".")
-                if parts:
-                    return parts[0]
+                # 解析 URL: https://username.tumblr.com/post/...
+                domain = href.split("://")[1] if "://" in href else href
+                username = domain.split(".")[0]
+                if username and username != "www" and username != "search":
+                    return username
+            
+            # 方式2: 从链接文本提取（格式: username）
+            text = link.text.strip()
+            if text and "." in text and "tumblr.com" not in text and "http" not in text:
+                # 可能是用户名（如 "deletingmyself"）
+                if len(text) < 50 and text.isalnum():
+                    return text
+            
+            # 方式3: 从链接提取（格式: https://username.tumblr.com）
+            if "tumblr.com" in href and "/post/" not in href:
+                domain = href.split("://")[1] if "://" in href else href
+                username = domain.split(".")[0]
+                if username and username != "www" and username != "search" and len(username) < 50:
+                    return username
         
-        # 尝试从 span 中提取用户名（@username 格式）
-        spans = article.find_elements(By.XPATH, ".//span[contains(@class, 'username')]")
+        # 方式4: 从 span 中提取用户名
+        spans = article.find_elements(By.TAG_NAME, "span")
         for span in spans:
             text = span.text.strip()
-            if text.startswith("@"):
+            if text.startswith("@") and len(text) < 50:
                 return text[1:]
-        
-        # 尝试从 data 属性提取
-        author_el = article.find_elements(By.XPATH, ".//a[contains(@class, 'username')]")
-        if author_el:
-            return author_el[0].text.strip()
             
     except Exception:
         pass
