@@ -69,40 +69,24 @@ CHROME_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_
 def extract_tumblr_username(article):
     """从 Tumblr article 标签中提取用户名"""
     try:
-        # 查找所有 a 标签
         links = article.find_elements(By.TAG_NAME, "a")
         for link in links:
             href = link.get_attribute("href") or ""
-            
-            # 方式1: 从链接提取（格式: https://username.tumblr.com/post/...）
-            if "tumblr.com" in href and "/post/" in href:
-                # 解析 URL: https://username.tumblr.com/post/...
-                domain = href.split("://")[1] if "://" in href else href
-                username = domain.split(".")[0]
-                if username and username != "www" and username != "search":
-                    return username
-            
-            # 方式2: 从链接文本提取（格式: username）
             text = link.text.strip()
-            if text and "." in text and "tumblr.com" not in text and "http" not in text:
-                # 可能是用户名（如 "deletingmyself"）
-                if len(text) < 50 and text.isalnum():
-                    return text
             
-            # 方式3: 从链接提取（格式: https://username.tumblr.com）
-            if "tumblr.com" in href and "/post/" not in href:
-                domain = href.split("://")[1] if "://" in href else href
-                username = domain.split(".")[0]
-                if username and username != "www" and username != "search" and len(username) < 50:
-                    return username
-        
-        # 方式4: 从 span 中提取用户名
-        spans = article.find_elements(By.TAG_NAME, "span")
-        for span in spans:
-            text = span.text.strip()
+            # 方式1: https://www.tumblr.com/username/postID/... 或 https://www.tumblr.com/username
+            if "tumblr.com/" in href:
+                after_domain = href.split("tumblr.com/")[1] if "tumblr.com/" in href else ""
+                parts = after_domain.strip("/").split("/")
+                if parts and parts[0] not in ("search", "tagged", "new", "t"):
+                    username = parts[0]
+                    if len(username) < 50:
+                        return username
+            
+            # 方式2: span文本为 @username
             if text.startswith("@") and len(text) < 50:
                 return text[1:]
-            
+        
     except Exception:
         pass
     return "Tumblr User"
