@@ -31,12 +31,11 @@ DB = {
 }  # 数据库连接配置，所有爬虫共用
 
 # ============================================================
-# 代理地址（只连本地代理端口）
+# 代理地址（直接连接Windows主机的Clash Verge）
 # ============================================================
-# Windows: 使用 Clash Verge → http://127.0.0.1:7890
-# Linux:   使用 gost       → socks5://127.0.0.1:1080
+# 直接连接Windows主机的Clash Verge，不走本地gost
 # 如果不需要代理，可将此值设为 None
-PROXY = "http://127.0.0.1:7890"  # 代理地址，Windows用Clash Verge，Linux用gost
+PROXY = "http://192.168.0.14:7890"  # 直接连接Windows Clash Verge
 
 # 以下由 PROXY 自动生成，不用改
 # requests 库使用的代理格式: {"http": "http://...", "https": "http://..."}
